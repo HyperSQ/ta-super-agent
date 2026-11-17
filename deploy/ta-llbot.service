@@ -1,0 +1,32 @@
+[Unit]
+Description=Teaching assistant dedicated LLBot
+After=network-online.target ta-llbot-pmhq.service
+Wants=network-online.target ta-llbot-pmhq.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=ta-qqbot
+Group=ta-qqbot
+Slice=ta-assistant.slice
+WorkingDirectory=/opt/ta-llbot/bin/llbot
+Environment=HOME=/var/lib/ta-llbot/qq-home
+Environment=XDG_CONFIG_HOME=/var/lib/ta-llbot/qq-home/.config
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/node /opt/ta-llbot/bin/llbot/llbot.js --pmhq-port=13200 --pmhq-host=127.0.0.1
+Restart=always
+RestartSec=30
+TimeoutStopSec=30
+MemoryMax=256M
+CPUQuota=30%
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ta-llbot
+
+[Install]
+WantedBy=multi-user.target

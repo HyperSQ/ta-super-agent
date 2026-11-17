@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { fixture } from './helpers.ts';
+import { receiveQQ } from '../src/adapters/qq/llbot.ts';
+import { DSH, routeDSH } from '../src/application/services/dsh.ts';
+import { DeliveryOutbox } from '../src/application/delivery-outbox.ts';
+import { QATools } from '../src/agents/qa-tools.ts';
+
+test('未提及助教的群文字入库但不路由，绑定群图片可确认、交付和引用', async t => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const base = { message_type: 'group' as const, self_id: '10', user_id: '2', group_id: '100' };
+  const text = { type: 'text', data: { text: '一致收敛怎么理解' } };
+  receiveQQ(f.engine, { ...base, message_id: '1', message: [text] });
+  assert.equal(f.store.pendingEvents().length, 0);
+  assert.equal(f.store.tasks().length, 0);
+  const dsh = new DSH(f.engine, 'test-only-secret-value');
+  assert.equal(dsh.messages('math', { teacher: false }).messages[0].text, text.data.text);
+  assert.equal(dsh.brief('math').recordedStudentMessages, 1);
+  const source = '$x^2$', png = Buffer.from('89504e470d0a1a0a', 'hex');
+  f.store.saveTeachingImage('preview', 'math', png, source);
+  assert.throws(() => dsh.groupPreview('math', 'different', 'preview'), /不一致/);
+  const preview = dsh.groupPreview('math', source, 'preview');
+  assert.equal(f.store.deliveries().length, 0);
+  const result = dsh.confirm(preview.confirmation);
+  assert.equal(dsh.confirm(preview.confirmation).eventId, result.eventId);
+  routeDSH(f.engine, f.store.event(result.eventId)!);
+  const outbox = new DeliveryOutbox(f.engine, { async send(d) {
+    assert.equal(d.imageId, 'preview');
+    assert.equal(d.announcement, true);
+    assert.equal(d.channel.target, '100');
+    return { externalId: '123', png };
+  } }, true);
+  await outbox.tick();
+  assert.equal(dsh.status(result.eventId).status, 'sent');
+  assert.equal(dsh.messages('math', { teacher: false, messageId: '123' }).replies[0].imageId, 'preview');
+  receiveQQ(f.engine, { ...base, message_id: '2', message: [{ type: 'reply', data: { id: '123' } }, text] });
+  const next = f.store.pendingEvents()[0];
+  const task = f.engine.createTask(next.id, 'qa', next.text);
+  const run = f.engine.claim(task.id)!;
+  const tools = new QATools(f.engine);
+  const quote = await tools.call(run, 'read_quoted_message', '{}', new AbortController().signal, true);
+  assert(Array.isArray(quote));
+  assert.equal(quote[1].type, 'image_url');
+  const fallback = await tools.call(run, 'read_quoted_message', '{}', new AbortController().signal, false);
+  assert.equal(JSON.parse(String(fallback)).text, source);
+});
+
+test('DSH 作业写入可重放且隔离课程，登记复用正式作业记录', t => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  f.engine.updateCourse('web:admin', { ...f.store.course('math')!, roster: ['同学甲'] }, 1);
+  const dsh = new DSH(f.engine, 'test-only-secret-value');
+  const input = { courseId: 'math', title: '练习', deadline: '2026-12-03T00:00:00Z', instructions: 'T2', gradingPolicy: '' };
+  const saved = dsh.writeAssignment('math', 'req-1', input);
+  assert.equal(saved.studentVisible, false);
+  assert.equal(dsh.writeAssignment('math', 'req-1', input).id, saved.id);
+  assert.throws(() => dsh.writeAssignment('math', 'req-1', { ...input, title: '另一份' }), /此请求编号/);
+  assert.throws(() => dsh.writeAssignment('other', 'req-2', { ...input, id: saved.id, revision: 1 }), /不属于/);
+  assert.equal(dsh.registerScores('math', saved.id, [{ name: '同学甲', score: 0, revision: 0 }])[0].score, 0);
+});

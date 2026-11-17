@@ -1,0 +1,28 @@
+{
+  "name": "ta-super-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "demo": "node scripts/demo.ts",
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
+    "desktop": "npm --prefix desktop start",
+    "desktop:test": "npm --prefix desktop test",
+    "desktop:dist": "npm --prefix desktop run dist"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "katex": "0.19.0",
+    "marked": "18.1.1",
+    "puppeteer-core": "25.14.0"
+  }
+}

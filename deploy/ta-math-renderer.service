@@ -1,0 +1,26 @@
+[Unit]
+Description=Teaching Assistant Formula Renderer
+
+[Service]
+User=ta-agent
+Group=ta-agent
+WorkingDirectory=/opt/ta-super-agent
+RuntimeDirectory=ta-math
+RuntimeDirectoryMode=0700
+Environment=TA_MATH_CHROMIUM=/opt/ta-math-chromium/chrome-headless-shell
+Environment=HOME=/run/ta-math
+ExecStart=/usr/local/bin/node /opt/ta-super-agent/scripts/math-renderer.ts
+Restart=on-failure
+UMask=0077
+PrivateNetwork=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+InaccessiblePaths=-/opt/ta-super-agent/.env -/opt/ta-super-agent/var
+NoNewPrivileges=true
+MemoryMax=384M
+CPUQuota=75%
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

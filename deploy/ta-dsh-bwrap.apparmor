@@ -1,0 +1,6 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+profile ta-dsh-bwrap /opt/ta-dsh/bin/ta-bwrap flags=(unconfined) {
+  userns,
+}

@@ -1,0 +1,29 @@
+[Unit]
+Description=Teaching Assistant Super Agent Kernel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ta-agent
+Group=ta-agent
+Slice=ta-assistant.slice
+WorkingDirectory=/opt/ta-super-agent
+ExecStart=/usr/local/bin/node --env-file=/opt/ta-super-agent/.env /opt/ta-super-agent/src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=100
+UMask=0077
+Environment=NODE_ENV=production
+CPUQuota=50%
+MemoryHigh=256M
+MemoryMax=384M
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ta-super-agent/var
+
+[Install]
+WantedBy=multi-user.target

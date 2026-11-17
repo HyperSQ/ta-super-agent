@@ -1,0 +1,25 @@
+{
+  "name": "@local/ta-super-agent-dsh",
+  "version": "1.10.0",
+  "description": "DSH 助教会话与独立助教服务器的 SSH 桥接",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./settings.js",
+    "./client": "./client.js",
+    "./tools": "./tools.js",
+    "./locale/*.json": "./locale/*.json",
+    "./tools/locale/*.json": "./tools/locale/*.json",
+    "./icon": "./icon.svg",
+    "./tools/icon": "./icon.svg"
+  },
+  "files": ["settings.js", "client.js", "tools.js", "transport.js", "harness.js", "cordis.patch.yml", "locale/*.json", "tools/locale/*.json", "icon.svg", "README.md", "NOTICE.md"],
+  "dependencies": { "ssh2": "1.17.0" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-plugin-manager"]
+    }
+  }
+}

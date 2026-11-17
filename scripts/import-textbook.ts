@@ -1,0 +1,20 @@
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { TextbookLibrary } from '../src/adapters/knowledge/library.ts';
+
+const source = process.argv[2], targetRoot = resolve(process.argv[3] ?? 'var/library');
+if (!source) throw new Error('用法：node scripts/import-textbook.ts <已有教材包目录> [独立教材库目录]');
+const from = resolve(source), manifest = JSON.parse(readFileSync(join(from, 'manifest.json'), 'utf8'));
+if (typeof manifest.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(manifest.id)) throw new Error('教材ID无效');
+const target = join(targetRoot, manifest.id);
+if (existsSync(target)) throw new Error('目标教材已存在；请使用新的资料目录导入，核对版本后再切换');
+const hash = (file: string) => createHash('sha256').update(readFileSync(join(from, file))).digest('hex');
+if (manifest.sourceSHA256 && existsSync(join(from, 'source.pdf')) && hash('source.pdf') !== manifest.sourceSHA256) throw new Error('原始PDF哈希校验失败');
+if (manifest.embedding?.vectorsSha256 && existsSync(join(from, 'vectors.bin')) && hash('vectors.bin') !== manifest.embedding.vectorsSha256) throw new Error('向量哈希校验失败');
+const reader = new TextbookLibrary(resolve(from, '..')); reader.load(manifest.id);
+mkdirSync(target, { recursive: true });
+const files = ['manifest.json', 'chunks.json', 'pages.json', 'hierarchy.json', 'vectors.bin', 'references.json', 'source.pdf'].filter(file => existsSync(join(from, file)));
+for (const file of files) copyFileSync(join(from, file), join(target, file));
+const imported = new TextbookLibrary(targetRoot).load(manifest.id);
+console.log(JSON.stringify({ imported: manifest.id, directory: target, files, chunks: imported.chunks.length, parents: imported.parents.size, warnings: imported.warnings }, null, 2));

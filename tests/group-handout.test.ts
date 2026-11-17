@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import test from 'node:test';
+import { fixture } from './helpers.ts';
+import { DSH, routeDSH } from '../src/application/services/dsh.ts';
+import { DeliveryOutbox } from '../src/application/delivery-outbox.ts';
+import { LLBotSender } from '../src/adapters/qq/llbot.ts';
+import { QQAccess } from '../src/application/services/qq-access.ts';
+
+test('实验 ZIP 通过通用群文件交付，回执可以没有聊天消息 ID，同请求不重发', async t => {
+  const f = fixture();
+  const dsh = new DSH(f.engine, 'test-secret');
+  const content = Buffer.from('504b0506000000000000000000000000000000000000', 'hex');
+  let count = 0;
+  let request: unknown;
+  const api = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    request = [req.url, JSON.parse(Buffer.concat(chunks).toString())];
+    count++;
+    res.end(JSON.stringify({ status: 'ok', retcode: 0, data: { file_id: 'qq-file' } }));
+  }).listen(0, '127.0.0.1');
+  t.after(async () => { await new Promise<void>(done => api.close(() => done())); f.store.close(); });
+  await once(api, 'listening');
+  const address = api.address();
+  assert(address && typeof address !== 'string');
+  const sender = new LLBotSender('http://127.0.0.1:' + address.port, '', new QQAccess(f.engine));
+  sender.loadFile = (course, id) => f.store.teachingFile(course, id);
+  const id = 'f'.repeat(64);
+  assert(dsh.groupFileOptions('math').extensions.includes('zip'));
+  assert.throws(() => dsh.groupFile('math', '101', '实验包.zip', content, id), /绑定群已变化/);
+  assert.throws(() => dsh.groupFile('math', '100', '实验包.exe', content, id), /不支持/);
+  const enqueue = () => dsh.groupFile('math', '100', '实验包.zip', content, id);
+  const receipt = enqueue();
+  assert.equal(enqueue().eventId, receipt.eventId);
+  await routeDSH(f.engine, f.store.event(receipt.eventId)!);
+  const outbox = new DeliveryOutbox(f.engine, sender, true);
+  await outbox.tick();
+  await outbox.tick();
+  assert.deepEqual(request, ['/upload_group_file', { group_id: '100', name: '实验包.zip', file: 'base64://' + content.toString('base64') }]);
+  assert.equal(count, 1);
+  assert.equal(enqueue().status, 'sent');
+  assert.equal(dsh.status(receipt.eventId).externalFileId, 'qq-file');
+  assert.equal(f.store.teachingFile('math', id), undefined);
+  assert.equal(f.store.threadForReply('qq-group:100', 'qq-file'), undefined);
+});

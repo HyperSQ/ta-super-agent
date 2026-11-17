@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>助教 Super Agent · 能力范围与数据流通</title>
+<style>
+  :root{
+    --ink:#1d2330; --muted:#5c6576; --line:#e2e6ee; --soft:#f6f8fc;
+    --accent:#3b5bdb; --accent-soft:#eef2ff; --green:#0f8f6f; --green-soft:#e8f7f1;
+    --amber:#a86400; --amber-soft:#fff5e6; --red:#b23c3c; --red-soft:#fdeeee; --violet:#6d4bd8; --violet-soft:#f1edff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#eef1f6;color:var(--ink)}
+  body{font:15px/1.75 "Microsoft YaHei","PingFang SC","Hiragino Sans GB",system-ui,sans-serif}
+  .page{max-width:1000px;margin:0 auto;background:#fff;padding:56px 64px 72px;box-shadow:0 1px 0 rgba(0,0,0,.02)}
+  h1,h2,h3{line-height:1.35;margin:0}
+  h1{font-size:34px;letter-spacing:.5px}
+  h2{font-size:23px;margin:0 0 14px;padding-bottom:10px;border-bottom:2px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 8px;color:var(--accent)}
+  p{margin:8px 0}
+  .muted{color:var(--muted)}
+  .small{font-size:12.5px}
+  code{font-family:Consolas,"Courier New",monospace;background:var(--soft);padding:1px 5px;border-radius:4px;font-size:12.5px}
+  .cover{padding:26px 0 8px}
+  .eyebrow{font-size:12px;letter-spacing:2px;color:var(--accent);font-weight:700}
+  .subtitle{font-size:17px;color:var(--muted);margin-top:10px}
+  .meta{display:flex;gap:22px;flex-wrap:wrap;margin-top:18px;font-size:12.5px;color:var(--muted)}
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:26px 0 4px}
+  .stat{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:12px 10px;text-align:center}
+  .stat b{display:block;font-size:22px;color:var(--accent);line-height:1.2}
+  .stat span{font-size:11.5px;color:var(--muted)}
+  section{margin-top:44px}
+  .lead{background:var(--accent-soft);border-left:4px solid var(--accent);border-radius:0 12px 12px 0;padding:16px 20px}
+  .lead p{margin:4px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h4{margin:0 0 8px;font-size:14px;color:var(--ink)}
+  .card ul{margin:6px 0 0;padding-left:18px}
+  .card li{margin:4px 0;font-size:13.5px}
+  .tag{display:inline-block;font-size:11.5px;border-radius:999px;padding:1px 9px;margin-right:6px;border:1px solid}
+  .tag.ok{color:var(--green);border-color:#bfe6d8;background:var(--green-soft)}
+  .tag.warn{color:var(--amber);border-color:#f0dcb4;background:var(--amber-soft)}
+  .tag.no{color:var(--red);border-color:#f2cfcf;background:var(--red-soft)}
+  .tag.info{color:var(--accent);border-color:#c9d5ff;background:var(--accent-soft)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px}
+  th,td{text-align:left;vertical-align:top;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{background:var(--soft);font-weight:700;font-size:12.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  /* 图 */
+  figure{margin:18px 0 6px;border:1px solid var(--line);border-radius:14px;padding:20px 18px 12px;background:linear-gradient(#fbfcff,#fff)}
+  figcaption{text-align:center;font-size:12.5px;color:var(--muted);margin-top:12px}
+  .flow{display:flex;align-items:stretch;gap:0;justify-content:center;flex-wrap:wrap}
+  .node{flex:0 0 auto;min-width:120px;max-width:190px;border:1.5px solid #c9d3e6;background:#fff;border-radius:10px;padding:10px 12px;text-align:center}
+  .node b{display:block;font-size:13px}
+  .node span{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+  .node.hot{border-color:var(--accent);background:var(--accent-soft)}
+  .node.warm{border-color:#e4c98f;background:var(--amber-soft)}
+  .node.good{border-color:#a9dcc9;background:var(--green-soft)}
+  .arrow{flex:0 0 34px;display:flex;align-items:center;justify-content:center;color:#8b96ab;font-size:18px}
+  .flow.vertical{flex-direction:column;align-items:center}
+  .flow.vertical .arrow{height:24px;flex:0 0 24px}
+  .flow.tight .node{min-width:0;flex:1 1 0;max-width:none;padding:8px 6px}
+  .flow.tight .node b{font-size:12.5px}
+  .flow.tight .node span{font-size:10.5px}
+  /* 时间线 */
+  .steps{list-style:none;margin:6px 0;padding:0}
+  .steps li{display:grid;grid-template-columns:26px 84px 1fr 132px;gap:10px;align-items:start;padding:9px 0;border-bottom:1px dashed var(--line)}
+  .steps li:last-child{border-bottom:none}
+  .steps .n{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;margin-top:2px}
+  .steps .who{font-size:11.5px;text-align:center;border-radius:6px;padding:2px 6px;margin-top:2px;border:1px solid}
+  .who.qq{color:#0f7f8f;border-color:#bfe4e9;background:#e9f8fb}
+  .who.kernel{color:var(--accent);border-color:#c9d5ff;background:var(--accent-soft)}
+  .who.worker{color:var(--violet);border-color:#d8ccff;background:var(--violet-soft)}
+  .who.out{color:var(--green);border-color:#bfe6d8;background:var(--green-soft)}
+  .who.db{color:#6b5a2a;border-color:#e8ddb9;background:#faf6e8}
+  .steps b{font-size:13.5px}
+  .steps p{margin:2px 0 0;font-size:12.5px;color:var(--muted)}
+  .writes{font-size:11.5px;color:var(--muted);text-align:right}
+  .writes code{font-size:11px}
+  /* 实体 */
+  .entities{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .ent{border:1.5px solid #cfd8e8;border-radius:10px;padding:10px 12px;background:#fff}
+  .ent b{font-size:13px;color:var(--accent)}
+  .ent ul{margin:6px 0 0;padding-left:16px}
+  .ent li{font-size:11.5px;color:var(--muted);margin:2px 0}
+  .rel{text-align:center;font-size:11.5px;color:#8b96ab;margin:6px 0}
+  /* 状态 */
+  .states{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center}
+  .chip{border:1.5px solid #cfd8e8;border-radius:999px;padding:5px 12px;font-size:12.5px;background:#fff}
+  .chip.run{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+  .chip.pause{border-color:#e4c98f;background:var(--amber-soft);color:var(--amber)}
+  .chip.end{border-color:#c9d3e6;background:var(--soft);color:var(--muted)}
+  .chip.bad{border-color:#f2cfcf;background:var(--red-soft);color:var(--red)}
+  .checks{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+  .check{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff}
+  .check b{display:block;font-size:13px;margin-bottom:4px}
+  .check span{font-size:12px;color:var(--muted)}
+  .note{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-size:13px;color:var(--muted)}
+  .footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
+  .toc{columns:2;column-gap:32px;font-size:13.5px;margin-top:8px}
+  .toc div{padding:3px 0;break-inside:avoid}
+  .toc b{color:var(--accent);margin-right:6px}
+  @media print{
+    body{background:#fff}
+    .page{box-shadow:none;padding:0;max-width:none}
+    @page{size:A4;margin:14mm}
+    section{page-break-inside:auto}
+    figure,.card,table,.steps li{page-break-inside:avoid}
+    h2{page-break-after:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="cover">
+  <div class="eyebrow">TA SUPER AGENT · 能力与数据流说明</div>
+  <h1>助教 Super Agent：能力范围与数据流通</h1>
+  <div class="subtitle">一个内核，四个入口；把“回答一个问题”变成“承担一件工作”。</div>
+  <div class="meta">
+    <span>版本 0.1.0</span><span>更新 2026-11-17</span><span>本地实现，未部署本次改动</span><span>测试：165 后端 + 7 桌面</span>
+  </div>
+  <div class="stats">
+    <div class="stat"><b>4</b><span>入口</span></div>
+    <div class="stat"><b>5</b><span>任务类型</span></div>
+    <div class="stat"><b>22</b><span>数据库迁移</span></div>
+    <div class="stat"><b>17</b><span>答疑工具</span></div>
+    <div class="stat"><b>8</b><span>任务状态</span></div>
+    <div class="stat"><b>7</b><span>待办来源</span></div>
+  </div>
+</header>
+
+<section>
+  <div class="lead">
+    <p><b>一句话定位：</b>它不是“QQ 里接了大模型的聊天机器人”，而是一个把课程事务建模成<b>事件 → 讨论 → 任务 → 交付</b>的持久系统。模型只在任务里干活，权限、版本和发送由程序守。</p>
+    <p><b>读法：</b>第 1 节看“能做什么”，第 2–6 节看“数据怎么流”，第 7–9 节看“为什么不会乱”，第 10–12 节看“边界与验收”。图全部由 HTML/CSS 绘制，不需要浏览器插件。</p>
+  </div>
+  <div class="toc">
+    <div><b>01</b>能力地图</div><div><b>02</b>系统全景</div>
+    <div><b>03</b>学生提问的数据流</div><div><b>04</b>教师事务的数据流</div>
+    <div><b>05</b>定时备课与 DSH 沙箱</div><div><b>06</b>邮件收作业与批改草稿</div>
+    <div><b>07</b>核心数据模型</div><div><b>08</b>状态机与三道校验</div>
+    <div><b>09</b>待办收件箱与建议</div><div><b>10</b>安全与隐私边界</div>
+    <div><b>11</b>当前边界</div><div><b>12</b>30 分钟验收路线</div>
+  </div>
+</section>
+
+<section>
+  <h2>01 · 能力地图：谁在用，能做什么</h2>
+  <div class="grid2">
+    <div class="card">
+      <h4>学生（QQ 群 / 私聊）</h4>
+      <ul>
+        <li>群里 @ 助教提问，引用原答复继续追问；发图片问题。</li>
+        <li>私聊 <code>/assignments</code> 查作业、<code>/extension</code> 申请延期；作业通过课程邮箱提交。</li>
+        <li><span class="tag ok">已通</span>教材检索、精确题号、原页核对、公式图、按作业与进度作答。</li>
+        <li><span class="tag info">私聊</span>查询自己的提交次数、迟交、个人延期与线下分数；说一句想延期，助教建待审批申请。</li>
+        <li><span class="tag no">边界</span>未 @ 的群消息只入库不回答；群内自由转发、任意文件上传未接。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>教师（QQ / 工作台 / DSH）</h4>
+      <ul>
+        <li>QQ 一句话建作业、改作业、登记分数、更新进度、维护名单（一次性确认）；说“把 QQ … 绑定到 …”即可绑定学生。</li>
+        <li>工作台管课程、作业、线下登记、延期、定时任务、学习记忆、邮箱、提交与延期。<span class="tag info">新增</span>「待办」。</li>
+        <li>DSH 助教会话：本地文件与脚本 + <code>ta_*</code> 工具，发群、改记录需确认卡。</li>
+        <li>问「本课程还有什么等我决定」由课程计划确定性回答，不调规划模型。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>系统自己（按计划/规则）</h4>
+      <ul>
+        <li>每周定时备课：原生 Worker 或 Linux DSH 沙箱，产物可发群文件。</li>
+        <li>答疑完成后异步提取学习记忆；教材检索按课程绑定。</li>
+        <li>Watchdog 每 15 秒扫描停滞任务与未知交付，只告警不改任务。</li>
+        <li>瞬态模型错误退避重试（5s / 20s / 60s，最多 3 次）。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>开发者（可验证）</h4>
+      <ul>
+        <li>146 个后端用例、7 个桌面用例；<code>npm run check</code>、<code>npm run desktop:test</code>。</li>
+        <li>18 个迁移，<code>IF NOT EXISTS</code> 可重复启动；单实例 SQLite。</li>
+        <li>管理 API + 只读观察接口；所有外发默认受开关控制。</li>
+        <li>演示模式无需服务器即可走通界面。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>02 · 系统全景：一个内核，四个入口</h2>
+  <figure>
+    <div class="flow">
+      <div class="node"><b>QQ · LLBot</b><span>群 / 私聊 / 图片</span></div>
+      <div class="arrow">→</div>
+      <div class="node hot"><b>内核（服务器）</b><span>接入 · Router · 任务 · Worker · 交付</span></div>
+      <div class="arrow">←</div>
+      <div class="node"><b>助教工作台</b><span>SSH 隧道 · Electron</span></div>
+    </div>
+    <div class="flow" style="margin-top:12px">
+      <div class="node"><b>DSH 助教会话</b><span>插件 / headless</span></div>
+      <div class="arrow">→</div>
+      <div class="node good"><b>SQLite + 教材 + 产物</b><span>唯一正式记录</span></div>
+      <div class="arrow">←</div>
+      <div class="node"><b>邮箱</b><span>收件 / 回信</span></div>
+    </div>
+    <figcaption>图 1 · 四个入口只负责信道，课程、作业、成绩、任务状态只有一份（内核 SQLite）。</figcaption>
+  </figure>
+  <table>
+    <tr><th style="width:22%">入口</th><th style="width:26%">连接方式</th><th>它不做什么</th></tr>
+    <tr><td>QQ（LLBot）</td><td>本机 HTTP webhook，令牌/签名校验</td><td>不直接读数据库、不自己决定发给谁</td></tr>
+    <tr><td>助教工作台</td><td>SSH 隧道到 127.0.0.1 管理 API</td><td>不持有管理令牌、不直连 SQLite</td></tr>
+    <tr><td>DSH 插件</td><td>SSH 转发；工具按需连服务器</td><td>确认卡之前不写业务、不发群</td></tr>
+    <tr><td>邮箱</td><td>IMAP / SMTP，经服务端收件服务</td><td>不自动回信、不替代教师核对</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>03 · 学生提问：一条消息的完整数据流</h2>
+  <figure>
+    <ol class="steps">
+      <li><span class="n">1</span><span class="who qq">QQ</span><div><b>接入鉴权</b><p>校验 webhook 令牌/签名、群号白名单、真实 QQ 身份与重放。</p></div><span class="writes">写 <code>events</code></span></li>
+      <li><span class="n">2</span><span class="who kernel">接入层</span><div><b>Thread 定位</b><p>有明确引用就按映射续接，否则建立新讨论；原文与作者不可变。</p></div><span class="writes">写 <code>event_threads</code></span></li>
+      <li><span class="n">3</span><span class="who kernel">Router</span><div><b>分流</b><p>学生消息<b>不调用规划模型</b>：直接建答疑任务；同线程已有任务则作为新输入。</p></div><span class="writes">写 <code>tasks</code> / <code>task_inputs</code></span></li>
+      <li><span class="n">4</span><span class="who kernel">Task Engine</span><div><b>版本与租约</b><p>任务入队；Runner 领取时拿 120 秒租约，每 30 秒续租。</p></div><span class="writes">写 <code>tasks.data</code></span></li>
+      <li><span class="n">5</span><span class="who kernel">上下文</span><div><b>组装材料</b><p>最近 12 条讨论、课程进度、教材检索、学生学习记忆；记忆版本被绑定。</p></div><span class="writes">写 <code>memory 读取版本</code></span></li>
+      <li><span class="n">6</span><span class="who worker">Worker</span><div><b>工具循环</b><p>最多 8 轮，每轮 ≤4 次工具调用、≤3 张图；工具只能读本任务可见范围。</p></div><span class="writes">写 <code>activities</code></span></li>
+      <li><span class="n">7</span><span class="who kernel">提交</span><div><b>三道校验后落库</b><p>版本、租约、课程版本、记忆与作业读取版本全部匹配才允许提交；同时写汇报。</p></div><span class="writes">写 <code>task_reports</code></span></li>
+      <li><span class="n">8</span><span class="who out">Outbox</span><div><b>先落库再外发</b><p>领取、发送、回执各记一次；发送结果未知标记 <code>unknown</code>，不自动重发。</p></div><span class="writes">写 <code>deliveries</code></span></li>
+    </ol>
+    <figcaption>图 2 · 每一步都可中断、可恢复、可拒绝；状态在系统里，不在模型上下文里。</figcaption>
+  </figure>
+  <div class="note">数据残留：原始消息（events）、线程归属（event_threads）、任务与输入（tasks / task_inputs）、汇报（task_reports）、交付（deliveries）、过程（activities）。任何一步失败，都不会凭空产生一条“已发送”的消息。</div>
+</section>
+
+<section>
+  <h2>04 · 教师事务：QQ 一句话到正式记录</h2>
+  <figure>
+    <div class="flow">
+      <div class="node"><b>教师 QQ 私聊</b><span>“给数分建作业，周五截止”</span></div>
+      <div class="arrow">→</div>
+      <div class="node hot"><b>Router 判定</b><span>教学事务</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>解析成草稿</b><span>缺字段就问</span></div>
+      <div class="arrow">→</div>
+      <div class="node warm"><b>一次性确认</b><span>确认码 8 位</span></div>
+      <div class="arrow">→</div>
+      <div class="node good"><b>正式记录</b><span>与工作台共用</span></div>
+    </div>
+    <figcaption>图 3 · 草稿不落正式表；确认、写入、回执在同一事务里完成，重放不会重复。</figcaption>
+  </figure>
+  <div class="grid3">
+    <div class="card"><h4>跨入口一致</h4><ul><li>QQ 发起，DSH 可补字段，工作台可核对。</li><li>三者看的是同一条作业与同一个版本。</li></ul></div>
+    <div class="card"><h4>确认码边界</h4><ul><li>绑定教师与课程，过期作废。</li><li>收件箱与日志都不显示确认码。</li></ul></div>
+    <div class="card"><h4>不自动群发</h4><ul><li>保存作业不等于发布通知。</li><li>发群是单独动作，要教师确认。</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>05 · 定时备课：DSH 沙箱里的长任务</h2>
+  <figure>
+    <div class="flow">
+      <div class="node"><b>每周计划</b><span>时间 / 提示词 / 工具</span></div>
+      <div class="arrow">→</div>
+      <div class="node hot"><b>内核建任务</b><span>scheduled</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>bwrap 沙箱</b><span>独立工作目录</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>MCP 课程工具</b><span>按计划逐项授权</span></div>
+      <div class="arrow">→</div>
+      <div class="node good"><b>产物 + 回执</b><span>登记 / 发群文件</span></div>
+    </div>
+    <figcaption>图 4 · 模型密钥留在内核，子进程只拿到桥接 socket；工作目录按课程与任务哈希隔离。</figcaption>
+  </figure>
+  <table>
+    <tr><th style="width:28%">隔离手段</th><th>作用</th></tr>
+    <tr><td>Bubblewrap + AppArmor</td><td>只挂载运行库、单个任务工作区和该任务的桥接 socket</td></tr>
+    <tr><td>按计划授权工具</td><td>计划里没勾的能力，DSH 调用直接被拒</td></tr>
+    <tr><td>产物哈希归档</td><td>同名文件按 SHA-256 留档，教师可下载、可查发送回执</td></tr>
+    <tr><td>教师答复续跑</td><td>任务进入 <code>waiting_teacher</code>，教师引用回复后继续同一会话</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>06 · 邮件收作业：先核对，再批改，最后回信</h2>
+  <figure>
+    <div class="flow">
+      <div class="node"><b>邮箱收件</b><span>IMAP</span></div>
+      <div class="arrow">→</div>
+      <div class="node hot"><b>候选任务</b><span>不直接算提交</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>教师核对</b><span>身份 / 作业归属</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>逐评分点草稿</b><span>附证据</span></div>
+      <div class="arrow">→</div>
+      <div class="node good"><b>教师确认后回信</b><span>不自动发送</span></div>
+    </div>
+    <figcaption>图 5 · 邮件只是原件入口；“是否算提交、算第几次、迟交与否”由教师核对与正式记录决定。</figcaption>
+  </figure>
+  <div class="grid2">
+    <div class="card"><h4>已经做到</h4><ul><li>文本与文字层 PDF 的批改草稿，逐评分点带证据。</li><li>草稿可编辑；回信走教师确认。</li><li>与 QQ 提交共用同一套正式提交记录。</li></ul></div>
+    <div class="card"><h4>还没做</h4><ul><li>扫描件 OCR。</li><li>自动登分与自动回信。</li><li>邮件正文与附件不进入收件箱，也不会进模型摘要。</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>07 · 核心数据模型：五个对象撑起全部流程</h2>
+  <figure>
+    <div class="entities">
+      <div class="ent"><b>Event 事件</b><ul><li>原文、真实作者、渠道、时间</li><li>不可变；引用映射单独存</li></ul></div>
+      <div class="ent"><b>Thread 讨论</b><ul><li>当前归属 + 修订版本</li><li>可纠正，历史保留</li></ul></div>
+      <div class="ent"><b>Task 任务</b><ul><li>目标、版本、输入纪元、租约</li><li>授权绑定来源与渠道</li></ul></div>
+      <div class="ent"><b>Report 汇报</b><ul><li>完成 / 等待 / 阻塞</li><li>证据只存引用，不存原文</li></ul></div>
+      <div class="ent"><b>Delivery 交付</b><ul><li>目标、正文、状态</li><li>回执与 unknown 单独记</li></ul></div>
+      <div class="ent"><b>业务记录</b><ul><li>课程、作业、登记、延期</li><li>提交、邮件、记忆、名单</li></ul></div>
+    </div>
+    <div class="rel">Event ──归属──▶ Thread ──触发──▶ Task ──提交──▶ Report ──排队──▶ Delivery ──回执──▶ Event（外部 ID 映射）</div>
+    <figcaption>图 6 · 任务只引用事件与业务记录，不复制聊天原文；汇报是 Router 下次决策的事实来源。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>08 · 状态机与三道校验：旧结果为什么进不来</h2>
+  <figure>
+    <div class="states">
+      <span class="chip run">queued</span><span class="arrow">→</span>
+      <span class="chip run">running</span><span class="arrow">→</span>
+      <span class="chip end">completed</span>
+      <span class="chip pause">paused</span><span class="chip pause">waiting_teacher</span>
+      <span class="chip bad">blocked</span><span class="chip bad">superseded</span><span class="chip bad">cancelled</span>
+    </div>
+    <figcaption>图 7 · 暂停/等待需教师恢复；阻塞可重试；取消不复活；替代不续用旧上下文。</figcaption>
+  </figure>
+  <div class="checks">
+    <div class="check"><b>提交前</b><span>任务版本 + 输入纪元 + 租约 + 课程版本 + 记忆/作业读取版本，全部匹配才允许写入。</span></div>
+    <div class="check"><b>交付领取</b><span>任务仍完成、版本未变、渠道未换、目标事件属于该任务，否则撤销这条待发记录。</span></div>
+    <div class="check"><b>发送前</b><span>再校验一次目标群与作者；发送结果未知只记 unknown，绝不自动重发。</span></div>
+  </div>
+  <h3>什么会让旧结果失效</h3>
+  <table>
+    <tr><th>触发</th><th>程序动作</th></tr>
+    <tr><td>学生补充新输入</td><td>输入纪元 +1，旧运行结果拒绝提交，任务重新排队</td></tr>
+    <tr><td>教师修改目标 / 暂停 / 取消</td><td>版本 +1，撤销未发交付，旧租约作废</td></tr>
+    <tr><td>记忆被教师修订</td><td>依赖该版本记忆的任务失效并重建上下文</td></tr>
+    <tr><td>作业被修改或撤回</td><td>读取该作业的任务失效，未发答复撤销</td></tr>
+    <tr><td>Thread 归属被纠正</td><td>双侧任务版本 +1，旧结果作废，原文与作者保留</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>09 · 待办收件箱与建议：教师只看“等我决定”的</h2>
+  <figure>
+    <div class="flow tight">
+      <div class="node"><b>草稿</b><span>待确认</span></div>
+      <div class="node"><b>提交/延期</b><span>待核对</span></div>
+      <div class="node"><b>名单变更</b><span>待确认</span></div>
+      <div class="node"><b>邮件</b><span>待核对</span></div>
+      <div class="node"><b>记忆失败</b><span>可重试</span></div>
+      <div class="node"><b>等待任务</b><span>等教师答复</span></div>
+      <div class="node"><b>告警</b><span>停滞 / 未知</span></div>
+    </div>
+    <div class="flow" style="margin-top:10px">
+      <div class="node hot"><b>收件箱聚合（只读）</b><span>七类来源 · 计数 · 时间排序</span></div>
+      <div class="arrow">→</div>
+      <div class="node good"><b>工作台「待办」</b><span>点「去处理」回原页面</span></div>
+    </div>
+    <figcaption>图 8 · 七类来源依次对应 teacher_work_drafts、coursework_requests、roster_approvals、course_mail_messages、memory_jobs、tasks、alerts。收件箱不复制业务动作，确认与审批仍在各自原入口完成。</figcaption>
+  </figure>
+  <div class="grid2">
+    <div class="card">
+      <h4>隐私处理</h4>
+      <ul>
+        <li>草稿与名单的确认码不返回，名单用哈希展示 ID。</li>
+        <li>邮件只给主题，不给正文、附件、发件人。</li>
+        <li>学生答疑与作业邮件的汇报只给数量，内容留在受控入口。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>建议（只读候选）</h4>
+      <ul>
+        <li>四条规则：提交积压、邮件积压、记忆失败、任务停滞。</li>
+        <li>每条带理由，不建任务、不发消息、不自动执行。</li>
+        <li>观察一段时间再讨论“自动执行”。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>10 · 安全与隐私边界</h2>
+  <table>
+    <tr><th style="width:20%">边界</th><th>做法</th></tr>
+    <tr><td>身份</td><td>教师 QQ 白名单 + 真实 QQ ID；学生不能创建教师任务或执行控制；管理端与 QQ 是两套入口。</td></tr>
+    <tr><td>渠道</td><td>群号白名单；私信只能回复真实发信者；任务交付目标由授权固定，模型改不了。</td></tr>
+    <tr><td>版本</td><td>任何修改产生新版本；旧运行迟到的结果一律拒收。</td></tr>
+    <tr><td>外发</td><td>默认关闭；开启后仍走队列与回执；unknown 不重发；确认码一次性。</td></tr>
+    <tr><td>注入</td><td>学生消息、教材、记忆、工具结果都视为资料；权限由程序判定，不靠提示词。</td></tr>
+    <tr><td>沙箱</td><td>DSH 用 bwrap + AppArmor；模型密钥留在内核。</td></tr>
+    <tr><td>审计</td><td>活动记录按消息串起模型调用、工具与交付；汇报与告警可回查。</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>11 · 当前边界：已经做到了哪一步</h2>
+  <table>
+    <tr><th style="width:14%">阶段</th><th style="width:46%">已完成</th><th>未完成</th></tr>
+    <tr><td>P0-A</td><td>任务汇报、课程计划、教师问计划、继续材料任务</td><td>汇报尚未在工作台单独成页</td></tr>
+    <tr><td>P0-B</td><td>七类待办收件箱、工作台「待办」页、隐私去敏</td><td>只读，动作回原入口</td></tr>
+    <tr><td>P1</td><td>跨跳召回（两跳 + 续读）、同线程批处理</td><td>订阅作用域迁移（等第二种真实用例）</td></tr>
+    <tr><td>P2</td><td>规则型 Watchdog、未知交付告警、瞬态错误退避</td><td>语义级监督、跨设备执行</td></tr>
+    <tr><td>P3</td><td>四条只读建议与理由</td><td>自动执行、一键采纳</td></tr>
+  </table>
+  <div class="note">
+    仍然明确不做的：学生账号体系、跨渠道身份绑定、群内自由文件识别、扫描件 OCR、自动登分与自动回信、周报、USTC 官方系统填报（缺授权）。<br>
+    已知限制：单实例 SQLite；日常答疑仍走原生 Worker（未迁到 DSH）；批处理默认关闭，需要 <code>TA_BATCH_MS</code> 显式开启；告警并入收件箱但没有独立告警页。
+  </div>
+</section>
+
+<section>
+  <h2>12 · 30 分钟验收路线</h2>
+  <ol class="steps">
+    <li><span class="n">1</span><span class="who qq">QQ</span><div><b>并发与引用</b><p>两个学生各提一题，再引用原答复追问；确认两条任务互不串台。</p></div><span class="writes">看「运行任务」</span></li>
+    <li><span class="n">2</span><span class="who qq">QQ</span><div><b>串台纠正</b><p>学生说“我问的是第 3 题”，观察归属修订与旧结果失效。</p></div><span class="writes">看「后台活动」</span></li>
+    <li><span class="n">3</span><span class="who kernel">教师</span><div><b>一句话建作业</b><p>私聊建作业并确认；到工作台核对同一记录，再发群。</p></div><span class="writes">看作业页面</span></li>
+    <li><span class="n">4</span><span class="who worker">定时</span><div><b>定时备课</b><p>建一个 2 分钟后的计划，观察 DSH 工具调用、产物登记与群文件回执。</p></div><span class="writes">看「后台活动」</span></li>
+    <li><span class="n">5</span><span class="who out">待办</span><div><b>收件箱闭环</b><p>产生一条待核对提交，从「待办」跳转处理，刷新后计数减一。</p></div><span class="writes">看计数变化</span></li>
+    <li><span class="n">6</span><span class="who db">重启</span><div><b>持久性</b><p>重启内核后再问「本课程还有什么等我决定」，计划与收件箱仍在。</p></div><span class="writes">看 SQLite</span></li>
+  </ol>
+</section>
+
+<div class="footer">
+  <span>助教 Super Agent · 能力范围与数据流通</span>
+  <span>2026-11-17 · 本地实现，服务器部署未变更</span>
+</div>
+
+</div>
+</body>
+</html>

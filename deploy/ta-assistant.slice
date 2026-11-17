@@ -1,0 +1,7 @@
+[Unit]
+Description=Independent teaching assistant services
+
+[Slice]
+CPUQuota=100%
+MemoryHigh=960M
+MemoryMax=1024M

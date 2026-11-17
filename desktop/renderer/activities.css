@@ -1,0 +1,15 @@
+.activity-graph { margin-bottom: 22px; }
+.activity-flow, .activity-branches, .activity-branches > div { display: flex; align-items: center; gap: 12px; }
+.activity-branches { justify-content: space-between; flex-wrap: wrap; margin-top: 14px; color: #526575; font-size: 13px; }
+.activity-node { flex: 1; min-width: 0; display: grid; gap: 5px; padding: 13px; background: #f4f8fb; border: 1px solid #d9e4ea; border-radius: 9px; text-align: left; color: #233547; cursor: pointer; }
+.activity-node[aria-pressed=true] { background: #e0f1ff; border-color: #4985b4; }
+.activity-node span, .activity-node small { color: #526575; font-size: 12px; }
+.activity-arrow { color: #627c93; }
+.activity-entry { display: flex; align-items: start; border-top: 1px solid #e4ebef; }
+.activity-entry details { flex: 1; min-width: 0; }
+.activity-entry summary { cursor: pointer; padding: 10px 0; }
+.activity-entry summary > * { margin-inline-end: 10px; }
+.activity-entry time, .activity-entry code, .activity-event { color: #526575; font-size: 12px; }
+.activity-badge { padding: 3px 6px; border-radius: 4px; background: #eaf2f8; color: #254e6e; font-size: 12px; }
+.activity-payload { padding: 4px 15px 12px; overflow-wrap: anywhere; }
+.activity-payload pre { background: #f5f7f9; border-radius: 6px; padding: 12px; color: #263846; white-space: pre-wrap; max-height: 410px; overflow: auto; }
