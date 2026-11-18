@@ -7,6 +7,7 @@ import { MemoryRepository } from '../adapters/storage/memory.ts';
 import { activity, currentActivity } from './activities.ts';
 import { recordTaskChange } from './task-memory.ts';
 import { recordTaskReport } from './task-reports.ts';
+import { RouterSessions } from './router-sessions.ts';
 import { conversationOwner, teacherAssistantEvent } from './teacher-conversation.ts';
 
 /** 只对可安全重放的瞬态错误退避；外部发送与权限错误不重试。 */
@@ -272,7 +273,10 @@ export class TaskEngine {
         this.store.saveTask(task);
         this.store.audit('task.teacher_wait', { taskId: task.id, questionId: task.teacherWait.questionId });
         // 已回答直接回队时不记等待汇报；真正停在 waiting_teacher 才留一份。
-        if (options.source === 'worker' && task.status === 'waiting_teacher') recordTaskReport(this, run, 'waiting_teacher', { task });
+        if (options.source === 'worker' && task.status === 'waiting_teacher') {
+          recordTaskReport(this, run, 'waiting_teacher', { task });
+          this.appendRouterReport(run, 'waiting_teacher');
+        }
         return;
       }
       delete task.teacherWait;
@@ -306,8 +310,19 @@ export class TaskEngine {
       this.store.audit('task.completed', { taskId: task.id, revision: task.revision, silent });
       if (task.kind === 'qa' && !silent && !task.grant.purpose && !replyEvent?.dsh) this.memory.enqueue(run, text);
       // 汇报只属于 Worker 实际提交；同步业务回执走各自原路径。
-      if (options.source === 'worker') recordTaskReport(this, run, 'completed', { task });
+      if (options.source === 'worker') { recordTaskReport(this, run, 'completed', { task }); this.appendRouterReport(run, 'completed'); }
     });
+  }
+  /** Worker 报告回传到常驻 Router 会话；progress 类型不写，避免噪音。 */
+  private appendRouterReport(run: Run, outcome: string): void {
+    try {
+      const origin = run.task.grant.originEventId ? this.store.event(run.task.grant.originEventId) : run.history[0]?.event;
+      if (!origin) return;
+      const sessions = new RouterSessions(this);
+      const session = sessions.ensure(origin.courseId, origin.threadId);
+      const summary = (run.task.result ?? run.task.error ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      sessions.append(session, 'assistant', `[${outcome}] ${run.task.kind}：${summary || run.task.goal.slice(0, 120)}`);
+    } catch { /* 会话记录失败不影响任务本身 */ }
   }
   fail(run: Run, error: unknown): void {
     this.store.atomic(() => {
@@ -327,7 +342,7 @@ export class TaskEngine {
       delete task.lease; delete task.leaseUntil; this.store.saveTask(task);
       this.store.audit('task.run_ended', { taskId: task.id, status: task.status, error: task.error, attempts: task.attempts, retryAt: task.retryAt });
       // 旧租约、输入变化或重新排队的运行不产生当前汇报；只有真正 blocked 才写。
-      if (task.status === 'blocked') recordTaskReport(this, run, 'blocked', { task, error });
+      if (task.status === 'blocked') { recordTaskReport(this, run, 'blocked', { task, error }); this.appendRouterReport(run, 'blocked'); }
     });
   }
   release(run: Run): void {

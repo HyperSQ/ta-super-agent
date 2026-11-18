@@ -33,6 +33,7 @@ export class Store {
     this.db.exec(readFileSync(new URL('../../../migrations/021-course-content.sql', import.meta.url), 'utf8'));
     this.db.exec(readFileSync(new URL('../../../migrations/022-course-files.sql', import.meta.url), 'utf8'));
     this.db.exec(readFileSync(new URL('../../../migrations/023-submission-files.sql', import.meta.url), 'utf8'));
+    this.db.exec(readFileSync(new URL('../../../migrations/024-router-sessions.sql', import.meta.url), 'utf8'));
   }
   atomic<T>(fn: () => T): T {
     if (this.db.isTransaction) {

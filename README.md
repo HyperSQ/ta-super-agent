@@ -65,6 +65,7 @@ npm start
 - [学生查询本人作业情况](docs/student-self-service.md)
 - [课程内容层与 Worker 能力边界](docs/course-content.md)
 - [批改批次：截止节点统一审核与回信](docs/grading-batches.md)
+- [常驻 Router 会话：对照官方原型的第一版](docs/router-session.md)
 - [课程群白名单与群成员私信](docs/qq-course-access.md)
 - [可修正的 Thread 分类](docs/thread-routing.md)
 - [桌面端启动与打包](desktop/README.md)
