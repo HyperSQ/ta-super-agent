@@ -96,7 +96,7 @@ function progressMetadata(c) {
 function coursePage() {
   const c = state.newCourse ? {} : course() || {};
   const field = (name, label, value, extra = '') => `<label>${label}<input name="${name}" value="${escape(value)}" ${extra}></label>`;
-  return pageHead(state.newCourse || !c.id ? '创建课程' : '课程设置', '让助教了解课程安排与规则，学生按姓名管理。', '<button class="button secondary" data-action="new-course">' + icon('plus') + ' 新建课程</button>') + `<form id="course-form"><div class="form-columns"><section class="card"><h2>基本信息</h2><p class="form-intro">设置课程名称、班级与沟通范围。</p><div class="grid2 section-gap">${field('title', '课程名称', c.title, 'required placeholder="例如：数学分析"')}${field('className', '授课班级', c.className, 'placeholder="例如：2026级数学一班"')}${field('groupId', '课程 QQ 群号', c.groupId, 'inputmode="numeric" pattern="[0-9]*" placeholder="可选"')}<div></div><label class="field-wide">教学进度<textarea name="progress" rows="4" placeholder="记录已经讲到的内容与接下来的安排">${escape(c.progress)}</textarea></label><label class="field-wide">助教工作说明<textarea name="instructions" rows="3" placeholder="例如：答疑先给思路，再逐步解释">${escape(c.instructions)}</textarea></label></div><div class="subsection"><h3>通用评分标准</h3><label><textarea name="gradingPolicy" rows="4" placeholder="定义步骤分、计算错误与重复扣分等统一规则">${escape(c.gradingPolicy)}</textarea></label><p class="help">新建作业可沿用此标准；实际自动批改功能将在后续接入。</p></div></section><section class="card"><h2>课程学生名单</h2><p class="form-intro">每行一个姓名，用于线下登记与缺交统计。</p><label class="section-gap"><textarea name="roster" rows="18" placeholder="张三&#10;李四&#10;王五">${escape((c.roster || []).join('\n'))}</textarea></label><p class="help">无需绑定 QQ 或邮箱。同班重名时，请在姓名后添加可区分的班级或学号备注。</p><div class="note section-gap">修改将保存到服务器。编辑课程不会向学生群自动发布消息。</div>${c.id ? progressMetadata(c) : ''}</section></div><div class="form-footer"><span class="muted spacer">${c.id ? `课程版本 ${c.revision || 1}` : '建立课程后即可创建作业'}</span><button class="button" type="submit">${c.id ? '保存更改' : '创建课程'}</button></div></form>`;
+  return pageHead(state.newCourse || !c.id ? '创建课程' : '课程设置', '让助教了解课程安排与规则，学生按姓名管理。', '<button class="button secondary" data-action="new-course">' + icon('plus') + ' 新建课程</button>') + `<form id="course-form"><div class="form-columns"><section class="card"><h2>基本信息</h2><p class="form-intro">设置课程名称、班级与沟通范围。</p><div class="grid2 section-gap">${field('title', '课程名称', c.title, 'required placeholder="例如：数学分析"')}${field('className', '授课班级', c.className, 'placeholder="例如：2026级数学一班"')}${field('groupId', '课程 QQ 群号', c.groupId, 'inputmode="numeric" pattern="[0-9]*" placeholder="可选"')}<div></div><label class="field-wide">教学进度<textarea name="progress" rows="4" placeholder="记录已经讲到的内容与接下来的安排">${escape(c.progress)}</textarea></label><label class="field-wide">助教工作说明<textarea name="instructions" rows="3" placeholder="例如：答疑先给思路，再逐步解释">${escape(c.instructions)}</textarea></label></div><div class="subsection"><h3>通用评分标准</h3><label><textarea name="gradingPolicy" rows="4" placeholder="定义步骤分、计算错误与重复扣分等统一规则">${escape(c.gradingPolicy)}</textarea></label><p class="help">新建作业可沿用此标准；实际自动批改功能将在后续接入。</p></div></section><section class="card"><h2>课程学生名单</h2><p class="form-intro">每行一个姓名，用于线下登记与缺交统计。</p><label class="section-gap"><textarea name="roster" rows="18" placeholder="张三&#10;李四&#10;王五">${escape((c.roster || []).join('\n'))}</textarea></label><p class="help">无需绑定 QQ 或邮箱。同班重名时，请在姓名后添加可区分的班级或学号备注。</p><div class="note section-gap">修改将保存到服务器。编辑课程不会向学生群自动发布消息。</div>${c.id ? progressMetadata(c) : ''}${c.id && !state.profile.demo ? `<div class="subsection"><h3>课程教材</h3><p class="help">已绑定 ${(c.textbookIds ?? []).length} 份教材。Markdown 用 ## 1.1 节标题和 ### T1 题号。</p><input type="file" id="textbook-markdown" accept=".md,.markdown"><button type="button" class="button secondary small" data-action="textbook-import">导入并绑定</button></div>` : ''}</section></div><div class="form-footer"><span class="muted spacer">${c.id ? `课程版本 ${c.revision || 1}` : '建立课程后即可创建作业'}</span><button class="button" type="submit">${c.id ? '保存更改' : '创建课程'}</button></div></form>`;
 }
 function imagePreviews() {
   return state.assignmentImages.map((image, index) => `<div class="assignment-image">
@@ -217,7 +217,7 @@ function inboxPage() {
   const chips = Object.entries(names).filter(([kind]) => counts[kind]).map(([kind, label]) => pill(`${label} ${counts[kind]}`, kind === 'alert' ? 'orange' : '')).join('');
   const rows = (data.items || []).map(item => {
     const page = jumps[item.entry];
-    const action = item.kind === 'grading'
+    const action = item.kind === 'grading' && item.status === 'pending'
       ? `<span class="row"><button class="button small" data-action="grading-approve" data-id="${escape(item.id)}">通过</button>` +
         `<button class="button ghost small" data-action="grading-reject" data-id="${escape(item.id)}">驳回</button></span>`
       : page ? `<button class="button secondary small" data-action="page" data-page="${page}">去处理</button>` : '<span class="help">在原 QQ 会话或助教对话处理</span>';
@@ -372,13 +372,35 @@ document.addEventListener('click', async event => {
       const id = button.dataset.id;
       button.disabled = true;
       try {
-        const result = await api('POST', `/v1/courses/${encodeURIComponent(state.courseId)}/grading-batches/${encodeURIComponent(id)}/${action === 'grading-approve' ? 'approve' : 'reject'}`);
-        toast(action === 'grading-approve' ? `已通过，回信 ${result.sent ?? 0} 份` : '已驳回这批批改');
+        const courseId = encodeURIComponent(state.courseId);
+        if (action === 'grading-approve') {
+          const batches = await api('GET', `/v1/courses/${courseId}/grading-batches`);
+          const batch = batches.find(item => item.id === id && item.status === 'pending');
+          if (!batch) throw new Error('该批次已更新，请刷新待办');
+          const scores = batch.items.map(item => `${item.studentName} · ${item.assignmentTitle} · ${item.total}/${item.maximum}`);
+          if (!window.confirm(`确认向以下 ${scores.length} 份作业的发件人发送批改反馈？\n\n${scores.join('\n')}`)) return;
+        }
+        const result = await api('POST', `/v1/courses/${courseId}/grading-batches/${encodeURIComponent(id)}/${action === 'grading-approve' ? 'approve' : 'reject'}`);
+        toast(action === 'grading-approve' ? `已通过，回信 ${result.sent ?? 0} 份${result.failed ? `，${result.failed} 份需核对` : ''}` : '已驳回这批批改');
         await loadInbox(); render();
-      } catch (error) { button.disabled = false; toast(error.message, true); }
+      } catch (error) { toast(error.message, true); }
+      finally { button.disabled = false; }
       return;
     }
     if (['coursework-review', 'coursework-file'].includes(action)) { await courseworkAction(action, button.dataset); return; }
+    if (action === 'textbook-import') {
+      if (state.dirty) { toast('请先保存课程编辑'); return; }
+      const input = $('#textbook-markdown'), file = input?.files?.[0], selected = course();
+      if (!file || file.size > 480_000) { toast('请选择不超过 480 KB 的 UTF-8 Markdown 文件', true); return; }
+      button.disabled = true;
+      try {
+        const markdown = await file.text();
+        const book = await api('POST', `/v1/courses/${encodeURIComponent(selected.id)}/textbook-import`, { markdown, revision: selected.revision });
+        await refresh(); render();
+        toast(`已导入「${book.title}」，共 ${book.sections} 节、${book.exercises} 题`);
+      } finally { button.disabled = false; }
+      return;
+    }
     if (action?.startsWith('course-mail-')) { await courseMailAction(action, button.dataset); return; }
     if (action === 'copy-lesson') {
       const task = state.tasks.find(item => item.id === button.dataset.id && item.courseId === state.courseId && ['lesson', 'scheduled'].includes(item.kind));
@@ -453,7 +475,7 @@ document.addEventListener('change', async event => {
   } catch (error) { toast(error.message, true); }
 });
 document.addEventListener('input', event => {
-  if (event.target.closest('#course-form,#assignment-form,#memory-form,#extension-form,#schedules-form,#course-mail-settings,#course-mail-reply,#conversation-form') && event.target.id !== 'assignment-files') state.dirty = true;
+  if (event.target.closest('#course-form,#assignment-form,#memory-form,#extension-form,#schedules-form,#course-mail-settings,#course-mail-reply,#conversation-form') && !['assignment-files','textbook-markdown'].includes(event.target.id)) state.dirty = true;
   const name = event.target.dataset.scoreName;
   if (name) {
     const current = state.records.find(r => r.studentName === name);

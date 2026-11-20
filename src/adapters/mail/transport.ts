@@ -5,7 +5,7 @@ import { DomainError } from '../../domain/model.ts';
 export type MailSettings = {
   address: string; imapHost: string; imapPort: number; folder: string;
   smtpHost: string; smtpPort: number; smtpMode: 'tls' | 'starttls';
-  prefix: string; enabled: boolean; revision: number; since: number;
+  prefix: string; enabled: boolean; autoGrade?: boolean; autoRegisterGrade?: boolean; revision: number; since: number;
 };
 export type MailCredentials = MailSettings & { password: string };
 export type MailCursor = { validity?: number; last?: number };

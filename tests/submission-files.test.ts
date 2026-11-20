@@ -34,6 +34,8 @@ test('新提交附件落盘，数据库只留路径，读取走文件', () => {
     assert.equal(submission.files[0].content.toString(), '我的作答内容');
     assert.equal(submission.files[0].bytes, content.length);
 
+    f.engine.createCourse('web:admin', { id: 'other', title: '另一门课', groupId: '101', instructions: '' });
+    assert.throws(() => intake.file('other', request.id, 1), /未找到该提交附件/);
     const file = intake.file('math', request.id, 1);
     assert.equal(Buffer.from(file.data, 'base64').toString(), '我的作答内容');
   } finally {

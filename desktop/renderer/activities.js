@@ -17,6 +17,9 @@ function activitiesPage() {
   return pageHead('后台活动', '从消息入口追踪到 Router、Worker、工具和交付。', '<button class="button secondary" data-activity="refresh">刷新</button>') +
     `<section class="card activity-graph" aria-label="服务拓扑"><div class="activity-flow">${graph}</div>
       <div class="activity-branches"><span>入口 ⇢ Worker · 已订阅的后续消息</span><div>${nodeButton('memory', selected, view)}${nodeButton('tools', selected, view)}</div></div></section>
+    ${!view.event && view.questions?.length ? `<section class="card"><h2>课堂疑问（未 @ 助教）</h2><p class="muted">近七天记录，可供备课使用。</p>
+      ${view.questions.map(q => `<div class="activity-entry"><time>${escape(fmt(q.at))}</time><strong>${escape(q.text)}</strong>
+      <button class="button ghost small" data-activity="event" data-event="${escape(q.eventId)}">查看原事件</button></div>`).join('')}</section>` : ''}
     <section class="card activity-timeline"><div class="card-title"><h2>${selected ? activityNodes[selected][0] : '活动时间线'}</h2><div class="row">
       ${view.event ? '<button class="button secondary small" data-activity="all">返回全部事件</button>' : ''}
       ${selected ? '<button class="button secondary small" data-activity="nodes">全部节点</button>' : ''}</div></div>
@@ -44,6 +47,12 @@ async function openActivities({ event, append = false, node } = {}) {
     const page = state.profile.demo ? { entries: [] } : await api('GET', activityPath() + (params.size ? '?' + params : ''));
     view.entries = [...view.entries, ...page.entries];
     view.next = page.next;
+    if (!event && !state.profile.demo) {
+      view.questions = await api('GET', `/v1/courses/${encodeURIComponent(view.course)}/passive-questions`).catch(error => {
+        if (error.status !== 404) throw error;
+        return [];
+      });
+    }
   } catch (error) { view.error = error.message; }
   finally {
     view.busy = false;

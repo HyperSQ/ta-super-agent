@@ -255,7 +255,7 @@ export function apply(ctx) {
   });
   register('ta_request_status', '查看服务器助教请求、教师询问答复或 QQ 交付回执。', { eventId: field('桥接返回的事件 ID') },
     ({ eventId }, exec) => bridge(exec, api => api('GET', '/v1/dsh/requests/' + encodeURIComponent(eventId))));
-  register('ta_course_conversation', '继续教师在 QQ、工作台或 DSH 的同一课程对话。history 读取近期对话，message 将教师本轮明确要求交给 Router，status 读取该条的结果。同一请求返回事件 ID；只转交用户本轮必要内容。', {
+  register('ta_course_conversation', '继续教师在 QQ、工作台或 DSH 的同一课程对话。教师要求每周制作讲义、安排或修改周期任务、暂停课程日程或立即运行已有计划时，用 message 交给服务器 Router。history 读取近期对话；status 按事件 ID 查实际登记、排队结果或服务器的澄清问题。只转交当前操作所需内容。', {
     courseId: field('课程 ID'),
     action: field('history、message 或 status'),
     message: { type: 'string', description: 'message 时传用户本轮要交给课程助教的内容' },

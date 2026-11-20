@@ -24,12 +24,12 @@ test('服务器上的任务产物可按 path 读取，未发布与越界路径�
     const content = Buffer.from('一致收敛的柯西准则');
     writeFileSync(join(dir, 'handout.txt'), content);
     f.store.saveTask({ ...task, result: '讲义正文', artifacts: [{ name: 'handout.txt', bytes: content.length,
-      sha256: createHash('sha256').update(content).digest('hex') }] });
+      sha256: createHash('sha256').update(content).digest('hex'), deliveryEventId: event.id }] });
 
     const files = new CourseFiles(f.engine, root);
     assert.equal(files.list('math').length, 0);
     const delivery: Delivery = { id: randomUUID(), taskId: task.id, revision: task.revision, inputEpoch: task.inputEpoch,
-      replyEventId: event.id, channel: { kind: 'qq-group', target: '100' }, text: '讲义', status: 'sent', sentAt: f.engine.now() };
+      replyEventId: event.id, channel: { kind: 'qq-group', target: '100' }, text: '讲义', fileId: randomUUID(), status: 'sent', sentAt: f.engine.now() };
     f.store.saveDelivery(delivery);
     const listed = files.list('math');
     assert.equal(listed.length, 1);
@@ -37,6 +37,8 @@ test('服务器上的任务产物可按 path 读取，未发布与越界路径�
     const read = files.read('math', listed[0].path);
     assert.equal(read.content.toString(), '一致收敛的柯西准则');
     assert.throws(() => files.read('math', '../../etc/passwd'), /找不到/);
+    writeFileSync(join(dir, 'handout.txt'), '未发布的同名文件');
+    assert.throws(() => files.read('math', read.path), /需要重新发布/);
   } finally {
     f.store.close(); rmSync(root, { recursive: true, force: true });
   }
@@ -53,9 +55,9 @@ test('文件工具列出并读取文本，看不到草稿', async () => {
     const dir = join(root, 'math', task.id, 'artifacts');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'notes.md'), '一致收敛的定义与反例');
-    f.store.saveTask({ ...task, artifacts: [{ name: 'notes.md', bytes: 30, sha256: 'x' }] });
+    f.store.saveTask({ ...task, artifacts: [{ name: 'notes.md', bytes: 30, sha256: createHash('sha256').update('一致收敛的定义与反例').digest('hex'), deliveryEventId: event.id }] });
     const delivery: Delivery = { id: randomUUID(), taskId: task.id, revision: task.revision, inputEpoch: task.inputEpoch,
-      replyEventId: event.id, channel: { kind: 'qq-group', target: '100' }, text: '文件', status: 'sent', sentAt: f.engine.now() };
+      replyEventId: event.id, channel: { kind: 'qq-group', target: '100' }, text: '文件', fileId: randomUUID(), status: 'sent', sentAt: f.engine.now() };
     f.store.saveDelivery(delivery);
 
     const question = f.engine.receive({ sourceKey: randomUUID(), externalId: randomUUID(), threadId: randomUUID(),

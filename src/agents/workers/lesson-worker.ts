@@ -13,7 +13,12 @@ export function lessonWorker(engine: TaskEngine, model: AgentModel, knowledge: K
   return async ({ run, signal, checkpoint, handoff }) => {
     const { course, task } = run;
     const context = classContext(engine, course.id, { days: 7 });
-    const recent = context.group.recentMessages.slice(0, 6);
+    const passive = context.group.passiveQuestions.slice(0, 8);
+    const recent = [
+      ...passive.map(question => ({ eventId: question.eventId, excerpt: question.text, source: '群内未点名的问题' })),
+      ...context.group.recentMessages.filter(message => !passive.some(question => question.eventId === message.eventId))
+        .slice(0, 6).map(message => ({ ...message, source: '近期群发言' })),
+    ];
     const notes = context.group.learningNotes.slice(0, 5);
     const selectedAssignments = academics.visibleAssignments(course.id).slice(-4).reverse();
     const assignments = selectedAssignments.map(item => {
@@ -31,14 +36,14 @@ export function lessonWorker(engine: TaskEngine, model: AgentModel, knowledge: K
       throw new Error(`无法唯一核对教材第 ${ids.join('、')} 节。请核对课程绑定的教材版本或明确章节标题。`);
     }
     const sections = sectionMatches.map(matches => matches[0]);
-    const textbookScope = sections.map(({ bookId, id, title, page, endPage, topics }) => ({ bookId, id, title, page, endPage, topics }));
+    const textbookScope = sections.map(({ bookId, id, title, page, endPage, topics, sourceKind }) => ({ bookId, id, title, page, endPage, topics, sourceKind }));
     const choices = sections.flatMap(section => (section.topics.length ? section.topics : [section]).map(topic => ({
       section: section.id, title: topic.title, page: topic.page,
     })));
     const evidence = {
       course: { title: course.title, progress: course.progress, progressSource: course.progressSource, progressEvidence: course.progressEvidence, guidance: course.instructions.slice(0, 1800) },
-      assignments: assignments.map(item => ({ ...item, offline: context.assignments.find(a => a.id === item.id)?.offline })),
-      studentQuestions: recent.map((message, i) => ({ ref: `Q${i + 1}`, text: message.excerpt })),
+      assignments: assignments.map(item => ({ ...item, offline: context.assignments.find(a => a.id === item.id)?.offline, commonMissedPoints: context.assignments.find(a => a.id === item.id)?.commonMissedPoints })),
+      studentQuestions: recent.map((message, index) => ({ ref: `Q${index + 1}`, eventId: message.eventId, text: message.excerpt, source: message.source })),
       learningTopics: notes.map((note, i) => ({ ref: `L${i + 1}`, topics: note.topics, evidenceType: note.evidenceType })),
       recordedGroupMessages: context.group.messageCount,
       textbookScope,
@@ -67,11 +72,11 @@ export function lessonWorker(engine: TaskEngine, model: AgentModel, knowledge: K
     const search = !sections.length && books.length ? await knowledge.search(books, query, signal) : undefined;
     const sectionPages = sections.flatMap(section => section.excerpts.map(excerpt => ({
       book: section.bookId, page: excerpt.page, contextStartPage: excerpt.page, endPage: excerpt.page, chapter: section.id + ' ' + section.title,
-      anchor: section.id, text: excerpt.text, needsVisualVerification: true,
+      anchor: section.id, text: excerpt.text, sourceKind: section.sourceKind, needsVisualVerification: section.sourceKind !== 'markdown',
     })));
     const semanticPages = (search?.hits ?? []).slice(0, 6).map(hit => ({
       book: hit.bookId, page: hit.page, contextStartPage: hit.contextStartPage, endPage: hit.endPage,
-      chapter: hit.chapter, anchor: hit.anchor, text: hit.text.slice(0, 1700), needsVisualVerification: hit.needsVisualVerification,
+      chapter: hit.chapter, anchor: hit.anchor, text: hit.text.slice(0, 1700), sourceKind: hit.sourceKind, needsVisualVerification: hit.needsVisualVerification,
     }));
     const extracts = [...sectionPages, ...semanticPages].slice(0, 10).map((hit, i) => ({ id: `S${i + 1}`, ...hit }));
     signal.throwIfAborted();
@@ -96,9 +101,9 @@ export function lessonWorker(engine: TaskEngine, model: AgentModel, knowledge: K
     if ([...used].some(id => !extracts.some(item => item.id === id))) throw new Error('讲义引用了未提供的教材资料，请重试');
     if (sections.length && !used.size) throw new Error('讲义未引用定位到的教材内容，请重试');
     const sources = extracts.filter(item => used.has(item.id)).map(item =>
-      `- [${item.id}] ${item.book}，PDF 第 ${item.page} 页（${item.chapter || item.anchor}）${item.needsVisualVerification ? '，公式需核对原页' : ''}`);
+      `- [${item.id}] ${item.book}，${item.sourceKind === 'markdown' ? `Markdown 第 ${item.page} 个小节` : `PDF 第 ${item.page} 页`}（${item.chapter || item.anchor}）${item.needsVisualVerification ? '，公式需核对原页' : ''}`);
     return `# ${draft.title.trim().replace(/\s+/g, ' ')}\n\n## 学生版\n\n${draft.studentMarkdown.trim()}\n\n## 教师版\n\n${draft.teacherMarkdown.trim()}\n\n## 材料与覆盖\n\n${[
-      ...textbookScope.map(section => `- 教材范围：${section.id} ${section.title}，PDF 第 ${section.page}–${section.endPage} 页`),
+      ...textbookScope.map(section => `- 教材范围：${section.id} ${section.title}${section.sourceKind === 'markdown' ? '（Markdown）' : `，PDF 第 ${section.page}–${section.endPage} 页`}`),
       ...(plan ? [`- 本周选题：${plan.focus}`, `- 选题依据：${plan.rationale}`,
         `- 课程进度来源：${course.progressSource === 'inferred' ? '据资料推断，待教师核对' : '教师更新'}`,
         ...recent.map((message, i) => `- [Q${i + 1}] 群消息记录 ${message.eventId}`), ...notes.map((note, i) => `- [L${i + 1}] 学习记录 ${note.memoryId}`)] : []),

@@ -1,6 +1,6 @@
 export type TaskKind = 'qa' | 'lesson' | 'scheduled' | 'teaching-affairs' | 'coursework';
 export type WorkerProfile = 'qa' | 'teaching-affairs' | 'coursework' | 'teaching-materials';
-export type ScheduledTool = 'class_context' | 'list_assignments' | 'read_assignment' | 'lookup_textbook' | 'search_textbook' | 'textbook_section' | 'view_textbook_page' | 'prepare_lesson' | 'read_messages' | 'read_attachment' | 'ask_teacher' | 'send_group_file';
+export type ScheduledTool = 'class_context' | 'list_assignments' | 'read_assignment' | 'lookup_textbook' | 'search_textbook' | 'textbook_section' | 'view_textbook_page' | 'prepare_lesson' | 'weekly_report' | 'read_messages' | 'read_attachment' | 'ask_teacher' | 'send_group_file';
 export type WeeklyTask = { id: string; title: string; prompt: string; tools: ScheduledTool[]; weekday: number; time: string;
   enabledAt: number; enabled: boolean; teacherQQ?: string; worker?: 'native' | 'dsh' };
 export type TaskStatus = 'queued' | 'running' | 'paused' | 'waiting_teacher' | 'cancelled' | 'superseded' | 'completed' | 'blocked';
@@ -9,6 +9,7 @@ export type Course = {
   id: string; title: string; groupId?: string; instructions: string;
   revision?: number; className?: string; progress?: string; textbookIds?: string[];
   gradingPolicy?: string; roster?: string[];
+  teacherHistoryStartAt?: number;
   progressAt?: number;
   progressSource?: 'teacher' | 'inferred';
   progressEvidence?: string[];
@@ -33,6 +34,7 @@ export type Event = {
   actor: Actor; text: string; receivedAt: number;
   channel: Channel; externalId: string;
   quoted?: boolean;
+  passiveQuestion?: true;
   quotedExternalId?: string;
   attachments?: QQAttachment[];
   teacherAnswerTo?: string;

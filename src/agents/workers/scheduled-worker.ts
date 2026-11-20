@@ -2,6 +2,7 @@ import type { ScheduledTool } from '../../domain/model.ts';
 import type { AgentMessage, AgentModel, ToolDefinition } from '../../ports/model.ts';
 import { qaToolDefinitions, QATools } from '../qa-tools.ts';
 import type { TaskEngine } from '../../application/task-engine.ts';
+import { weeklyReport } from '../../application/services/weekly-report.ts';
 import { classContext } from '../../application/services/class-context.ts';
 import { currentActivity } from '../../application/activities.ts';
 import type { Worker } from './qa-worker.ts';
@@ -16,6 +17,7 @@ export function scheduledWorker(engine: TaskEngine, model: AgentModel, qa: QAToo
     const origin = run.history[0]?.event;
     const allowed = new Set<string>(origin?.scheduledTools);
     const tools = [...qaToolDefinitions,
+      extra('weekly_report', '读取近七日已登记、待核对、迟交、获批延期和线下登记的脱敏汇总'),
       extra('class_context', '读取本课程进度、近期作业统计和学情概况'),
       extra('prepare_lesson', '研读课程教材后生成学生版与教师版讲义草稿；可指定本次备课要求', { goal: { type: 'string' } }),
     ].filter(tool => allowed.has(tool.function.name) && tool.function.name !== 'read_quoted_message');
@@ -44,11 +46,13 @@ export function scheduledWorker(engine: TaskEngine, model: AgentModel, qa: QAToo
         currentActivity('tool.call', name, details, 'tools');
         let output: Extract<AgentMessage, { role: 'tool' }>['content'];
         if (!tools.some(tool => tool.function.name === name)) output = JSON.stringify({ error: '这个任务没有启用该工具' });
+        else if (name === 'weekly_report') output = JSON.stringify(weeklyReport(engine, run.course.id));
         else if (name === 'class_context') {
           const overview = classContext(engine, run.course.id, { days: 7 });
           output = JSON.stringify({
             course: overview.course, coverage: overview.coverage, assignments: overview.assignments.filter(item => item.studentVisible),
             recentQuestions: overview.group.recentMessages.slice(0, 8).map(({ excerpt }) => excerpt),
+            passiveQuestions: overview.group.passiveQuestions.slice(0, 8),
             topics: overview.group.learningNotes.slice(0, 6).map(({ topics, evidenceType }) => ({ topics, evidenceType })),
           });
         } else if (name === 'prepare_lesson') {

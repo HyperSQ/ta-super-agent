@@ -45,8 +45,8 @@ test('Worker 返回结果时在同一事务写入汇报，且证据只含引用'
   assert.match(report.data.summary, /一致收敛/);
   assert.ok(report.data.evidence.every(item => typeof item.id === 'string'));
   assert.ok(report.data.evidence.some(item => item.kind === 'event'));
-  assert.deepEqual(report.data.unresolved, []);
-  assert.equal(report.data.next, 'none');
+  assert.deepEqual(report.data.unresolved, ['产物待教师查看']);
+  assert.equal(report.data.next, 'review_output');
   assert.equal(f.store.task(task.id)?.status, 'completed');
   f.store.close();
 });
@@ -198,7 +198,9 @@ test('「继续刚才那份讲义」续跑同一暂停任务并保留任务 ID',
   const f = fixture();
   const task = await lesson(f);
   f.engine.control(teacher(f, '暂停').id, task.id, 'pause', 1);
-  const router = new Router(f.engine, noModel);
+  const router = new Router(f.engine, { async complete() {
+    return JSON.stringify({ action: 'resume', taskId: task.id, revision: 2 });
+  } });
   const message = teacher(f, '继续刚才那份讲义');
   await router.route(message, signal);
   assert.equal(f.store.task(task.id)?.status, 'queued');
@@ -214,7 +216,9 @@ test('两份候选时只澄清，不替教师选任务', async () => {
   const second = await lesson(f, '/lesson 第二份讲义');
   f.engine.control(teacher(f, '暂停一').id, first.id, 'pause', 1);
   f.engine.control(teacher(f, '暂停二').id, second.id, 'pause', 1);
-  const router = new Router(f.engine, noModel);
+  const router = new Router(f.engine, { async complete() {
+    return JSON.stringify({ action: 'reply', text: `你指哪一份？第一份 ${first.id}，第二份 ${second.id}` });
+  } });
   const message = teacher(f, '继续刚才那份讲义');
   await router.route(message, signal);
   assert.equal(f.store.task(first.id)?.status, 'paused');

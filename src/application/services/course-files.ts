@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { createHash } from 'node:crypto';
 import { DomainError } from '../../domain/model.ts';
 import type { TaskEngine } from '../task-engine.ts';
+import { artifactPublished, publishedDeliveries } from './publication.ts';
 
 export type FileEntry = { path: string; name: string; bytes: number; visibility: 'draft' | 'published'; source: string };
 export type FileRoots = { artifacts: string; group: string };
@@ -23,13 +25,13 @@ export class CourseFiles {
   private rootFor(path: string) { return path.startsWith('group/') ? this.roots.group : this.roots.artifacts; }
 
   sync(courseId: string): void {
-    const published = new Set(this.engine.store.deliveries()
-      .filter(delivery => delivery.status === 'sent' && delivery.channel.kind === 'qq-group')
-      .map(delivery => delivery.taskId));
+    const published = publishedDeliveries(this.engine.store.deliveries(), this.engine.store.course(courseId)?.groupId);
+    this.db().prepare("DELETE FROM course_files WHERE course_id=? AND source LIKE 'task:%'").run(courseId);
     for (const task of this.engine.store.tasks()) {
-      if (task.courseId !== courseId || !task.artifacts?.length) continue;
-      const visibility = published.has(task.id) ? 'published' : 'draft';
+      if (task.courseId !== courseId || !task.artifacts?.length || task.memoryContextInvalidated ||
+          ['cancelled', 'superseded'].includes(task.status)) continue;
       for (const artifact of task.artifacts) {
+        const visibility = artifactPublished(artifact, published) ? 'published' : 'draft';
         const real = join(this.roots.artifacts, courseId, task.id, 'artifacts', artifact.name);
         if (!existsSync(real)) continue;
         this.register(courseId, `${task.id}/artifacts/${artifact.name}`, artifact.name, statSync(real).size,
@@ -55,8 +57,8 @@ export class CourseFiles {
 
   read(courseId: string, path: string, teacher = false): FileEntry & { content: Buffer } {
     this.sync(courseId);
-    const row = this.db().prepare('SELECT path,name,bytes,visibility,source FROM course_files WHERE course_id=? AND path=?')
-      .get(courseId, path) as FileEntry | undefined;
+    const row = this.db().prepare('SELECT path,name,bytes,visibility,source,sha256 FROM course_files WHERE course_id=? AND path=?')
+      .get(courseId, path) as (FileEntry & { sha256: string }) | undefined;
     if (!row) throw new DomainError('not_found', '找不到这个文件');
     if (row.visibility === 'draft' && !teacher) throw new DomainError('forbidden', '这份文件还没有发布，学生暂时看不到');
     const root = this.rootFor(row.path);
@@ -66,6 +68,9 @@ export class CourseFiles {
     try { real = realpathSync(grouped ? join(root, row.path) : join(root, courseId, row.path)); }
     catch { throw new DomainError('not_found', '文件已不在服务器上'); }
     if (real !== base && !real.startsWith(base + sep)) throw new DomainError('forbidden', '文件路径越界');
-    return { ...row, content: readFileSync(real) };
+    const content = readFileSync(real);
+    const { sha256, ...entry } = row;
+    if (createHash('sha256').update(content).digest('hex') !== sha256) throw new DomainError('stale', '文件内容已更新，需要重新发布');
+    return { ...entry, content };
   }
 }

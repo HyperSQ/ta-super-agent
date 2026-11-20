@@ -228,7 +228,7 @@ export class QATools {
         const kinds = typeof args.kinds === 'string'
           ? args.kinds.split(/[,，\s]+/).filter(kind => ['material', 'group-file', 'submission'].includes(kind)) as ('material' | 'group-file' | 'submission')[]
           : undefined;
-        const hits = new CourseContent(this.engine).search(courseId, current.actor.id, args.query, { kinds });
+        const hits = new CourseContent(this.engine).search(courseId, current.actor.id, args.query, { kinds, ownPrivate: current.channel.kind === 'qq-private' && run.task.grant.channel?.kind === 'qq-private' && current.actor.id === run.task.grant.requester });
         return JSON.stringify({ hits, hint: hits.length ? '用 open_course_content 打开引用。' : '没有找到已发布的对应内容。' });
       }
       if (name === 'open_course_content') {
@@ -237,7 +237,7 @@ export class QATools {
         if (!current) return JSON.stringify({ error: '缺少提问消息。' });
         if (typeof args.ref !== 'string' || !args.ref) throw new DomainError('invalid', '需要内容引用');
         try {
-          const row = new CourseContent(this.engine).open(courseId, current.actor.id, args.ref);
+          const row = new CourseContent(this.engine).open(courseId, current.actor.id, args.ref, { ownPrivate: current.channel.kind === 'qq-private' && run.task.grant.channel?.kind === 'qq-private' && current.actor.id === run.task.grant.requester });
           return JSON.stringify({ ref: row.ref, kind: row.kind, title: row.title, version: row.version,
             text: row.text.slice(0, 8000), truncated: row.text.length > 8000,
             ...(row.kind === 'group-file' ? { note: '群文件是二进制文件，可在工作台下载；需要内容时请学生发关键页截图。' } : {}) });

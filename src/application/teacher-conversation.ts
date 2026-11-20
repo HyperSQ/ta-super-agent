@@ -32,9 +32,6 @@ export function teacherThread(event: Event) {
     thread: event.conversationOwner ? 'teacher-assistant:' + event.conversationOwner : event.threadId,
   };
 }
-function activeOwner(engine: TaskEngine, courseId: string, owner: string) {
-  return engine.store.course(courseId) && engine.policy.isTeacher(owner);
-}
 function summarize(engine: TaskEngine, event: Event) {
   const db = engine.store.db;
   const rows = db.prepare("SELECT data FROM deliveries WHERE json_extract(data,'$.replyEventId')=? AND status<>'withdrawn' ORDER BY rowid LIMIT 3").all(event.id);
@@ -54,14 +51,16 @@ function summarize(engine: TaskEngine, event: Event) {
   };
 }
 export function teacherHistory(engine: TaskEngine, courseId: string, owner: string, limit = 12, beforeEventId?: string) {
-  if (!activeOwner(engine, courseId, owner)) return [];
+  const course = engine.store.course(courseId);
+  if (!course || !engine.policy.isTeacher(owner)) return [];
   const row = beforeEventId && engine.store.db.prepare('SELECT rowid AS seq FROM events WHERE id=? AND course_id=?').get(beforeEventId, courseId);
   const db = engine.store.db;
   const rows = db.prepare("SELECT data FROM events WHERE course_id=? AND rowid<? AND " +
+    "coalesce(json_extract(data,'$.receivedAt'),0)>=? AND " +
     "(json_extract(data,'$.conversationOwner')=? OR (json_extract(data,'$.conversationOwner') IS NULL " +
     "AND json_extract(data,'$.channel.kind')='qq-private' AND json_extract(data,'$.actor.id')=?)) " +
     "AND coalesce(json_extract(data,'$.dsh.kind'),'')<>'teacher.ask' AND json_extract(data,'$.teacherAnswerTo') IS NULL " +
-    "ORDER BY rowid DESC LIMIT ?").all(courseId, row ? Number(row.seq) : Number.MAX_SAFE_INTEGER, owner, owner, limit);
+    "ORDER BY rowid DESC LIMIT ?").all(courseId, row ? Number(row.seq) : Number.MAX_SAFE_INTEGER, course.teacherHistoryStartAt ?? 0, owner, owner, limit);
   return rows.reverse().map(item => summarize(engine, parse<Event>(item.data)));
 }
 export function contextForTeacher(engine: TaskEngine, event: Event | undefined) {

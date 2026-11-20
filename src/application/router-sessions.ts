@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { teacherThread } from './teacher-conversation.ts';
+import type { Event } from '../domain/model.ts';
 import type { TaskEngine } from './task-engine.ts';
 
 export type RouterSession = { id: string; courseId: string; threadId: string; summary: string; revision: number };
@@ -10,20 +12,19 @@ export type RouterTurn = { role: 'user' | 'assistant'; content: string; at: numb
  */
 export class RouterSessions {
   private engine: TaskEngine;
-  private cache = new Map<string, RouterSession>();
   constructor(engine: TaskEngine) { this.engine = engine; }
   private db() { return this.engine.store.db; }
 
+  forEvent(event: Event): RouterSession {
+    return this.ensure(event.courseId, teacherThread(event).thread);
+  }
+
   ensure(courseId: string, threadId: string): RouterSession {
-    const key = courseId + '\0' + threadId;
-    const cached = this.cache.get(key);
-    if (cached) return cached;
     const now = this.engine.now();
     this.db().prepare(`INSERT OR IGNORE INTO router_sessions(id,course_id,thread_id,summary,revision,created_at,updated_at)
       VALUES(?,?,?,'',1,?,?)`).run(randomUUID(), courseId, threadId, now, now);
     const row = this.db().prepare('SELECT id,course_id AS courseId,thread_id AS threadId,summary,revision FROM router_sessions WHERE course_id=? AND thread_id=?')
       .get(courseId, threadId) as RouterSession;
-    this.cache.set(key, row);
     return row;
   }
 
@@ -38,9 +39,9 @@ export class RouterSessions {
     this.db().prepare(`DELETE FROM router_messages WHERE session_id=? AND seq<=?`).run(session.id, Math.max(0, next - 80));
   }
 
-  recent(session: RouterSession, limit = 12): RouterTurn[] {
-    const rows = this.db().prepare('SELECT role,content,created_at AS at FROM router_messages WHERE session_id=? ORDER BY seq DESC LIMIT ?')
-      .all(session.id, Math.min(Math.max(limit, 1), 30)) as RouterTurn[];
+  recent(session: RouterSession, limit = 12, role?: RouterTurn['role']): RouterTurn[] {
+    const rows = this.db().prepare('SELECT role,content,created_at AS at FROM router_messages WHERE session_id=? AND (? IS NULL OR role=?) ORDER BY seq DESC LIMIT ?')
+      .all(session.id, role ?? null, role ?? null, Math.min(Math.max(limit, 1), 30)) as RouterTurn[];
     return rows.reverse();
   }
 

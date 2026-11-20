@@ -31,10 +31,12 @@ function allowRequest(method, route) {
   if (typeof route !== 'string' || route.length > 1000 || /[\r\n]/.test(route)) return false;
   if (method === 'GET' && /^\/v1\/courses\/[^/?]+\/conversation(?:\/[0-9a-f-]{36})?$/.test(route)) return true;
   if (method === 'POST' && /^\/v1\/courses\/[^/?]+\/conversation$/.test(route)) return true;
+  if (method === 'GET' && /^\/v1\/courses\/[^/?]+\/passive-questions$/.test(route)) return true;
+  if (method === 'POST' && /^\/v1\/courses\/[^/?]+\/textbook-import$/.test(route)) return true;
   const mail = {
     GET: /^\/v1\/courses\/[^/]+\/mail(?:\/messages\/[a-f0-9-]{36}(?:\/files\/[1-3])?)?$/,
     PUT: /^\/v1\/courses\/[^/]+\/mail$/,
-    POST: /^\/v1\/courses\/[^/]+\/mail\/(?:check|sync|messages\/[a-f0-9-]{36}\/(?:review|reply|grade))$/,
+    POST: /^\/v1\/courses\/[^/]+\/mail\/(?:check|sync|messages\/[a-f0-9-]{36}\/(?:review|reply|grade|register-grade))$/,
   };
   if (Object.hasOwn(mail, method) && mail[method].test(route)) return true;
   if (method === 'GET' && /^\/v1\/courses\/[^/?]+\/activities(?:\/\d+|\?(?:event=[\w-]+&)?before=\d+|\?event=[\w-]+)?$/.test(route)) return true;

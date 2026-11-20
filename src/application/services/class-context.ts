@@ -20,9 +20,16 @@ export function classContext(engine: TaskEngine, courseId: string, filters: { da
     const offline = academics.offline(assignment.id);
     const saved = offline.filter(record => roster.includes(record.studentName));
     const entry = student ? offline.find(record => record.studentName === student) : undefined;
+    const counts = db.prepare(`WITH latest AS (
+      SELECT data, row_number() OVER (PARTITION BY student_name ORDER BY json_extract(data,'$.receivedAt') DESC,rowid DESC) AS n
+      FROM coursework_requests WHERE course_id=? AND assignment_id=? AND kind='submission' AND state='accepted'
+    ) SELECT missed.value AS point, count(*) AS count FROM latest,json_each(latest.data,'$.graded.missed') AS missed
+      WHERE latest.n=1 AND json_extract(latest.data,'$.graded.assignmentRevision')=? GROUP BY missed.value ORDER BY count DESC,point LIMIT 8`)
+      .all(courseId, assignment.id, assignment.revision).map(({point, count}) => ({ point: String(point), count: Number(count) }));
     const extension = student ? academics.extensions('web:admin', assignment.id).students.find(row => row.studentName === student) : undefined;
     return {
       id: assignment.id, title: assignment.title, deadline: assignment.deadline, studentVisible: assignment.studentVisible === true,
+      commonMissedPoints: counts,
       offline: { rosterRecorded: saved.length, rosterScored: saved.filter(record => record.score !== undefined).length, outsideRoster: offline.length - saved.length },
       ...(student ? { student: { name: student, recorded: !!entry, score: entry?.score, registeredAt: entry?.registeredAt, revision: entry?.revision ?? 0,
         effectiveDeadline: extension?.effectiveDeadline ?? assignment.deadline } } : {}),
@@ -30,6 +37,7 @@ export function classContext(engine: TaskEngine, courseId: string, filters: { da
   });
   const group = {
     messageCount: 0, distinctQQAccounts: 0,
+    passiveQuestions: [] as { eventId: string; at: string; text: string }[],
     recentMessages: [] as { eventId: string; qq: string; at: string; excerpt: string }[],
     learningNotes: [] as { memoryId: string; qq: string; at: string; topics: string[]; observation: string; outcome: string; evidenceType: string; sourceEventIds: string[] }[],
   };
@@ -47,6 +55,12 @@ export function classContext(engine: TaskEngine, courseId: string, filters: { da
         const event = JSON.parse(String(row.data)) as Event;
         return { eventId: event.id, qq: event.actor.id.slice(3), at: new Date(event.receivedAt).toISOString(),
           excerpt: event.text.length > 450 ? event.text.slice(0, 450) + '…' : event.text };
+      });
+    group.passiveQuestions = db.prepare(`SELECT data FROM events WHERE ${where} AND json_extract(data,'$.passiveQuestion')=1
+      ORDER BY json_extract(data,'$.receivedAt') DESC,rowid DESC LIMIT 24`).all(...params)
+      .map(row => {
+        const event = JSON.parse(String(row.data)) as Event;
+        return { eventId: event.id, at: new Date(event.receivedAt).toISOString(), text: event.text.slice(0, 450) };
       });
     const cards = db.prepare(`SELECT data FROM memories WHERE course_id=? AND status='active'
       AND json_extract(data,'$.channel.kind')='qq-group' AND json_extract(data,'$.channel.target')=?

@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { TaskEngine } from './task-engine.ts';
-import type { Course, WeeklyTask } from '../domain/model.ts';
+import { DomainError } from '../domain/model.ts';
+import type { Course, ScheduledTool, WeeklyTask } from '../domain/model.ts';
 import type { Model } from '../ports/model.ts';
 import { Academics } from './services/academics.ts';
 import type { Event } from '../domain/model.ts';
@@ -18,13 +20,40 @@ export function weeklySlot(now: number, schedule: Pick<WeeklyTask, 'weekday' | '
 }
 
 export const scheduledTools = ['class_context', 'list_assignments', 'read_assignment', 'lookup_textbook',
-  'search_textbook', 'textbook_section', 'view_textbook_page', 'prepare_lesson', 'read_messages', 'read_attachment', 'ask_teacher', 'send_group_file'] as const;
+  'search_textbook', 'textbook_section', 'view_textbook_page', 'prepare_lesson', 'weekly_report', 'read_messages', 'read_attachment', 'ask_teacher', 'send_group_file'] as const;
 export const dshOnlyTools = new Set<string>(['read_messages', 'read_attachment', 'ask_teacher', 'send_group_file']);
+export function scheduleFields(engine: TaskEngine, row: Record<string, unknown>, dshAvailable: boolean, prior?: WeeklyTask): WeeklyTask {
+  const { id, weekday } = row;
+  const { time, enabled, tools } = row;
+  const title = typeof row.title === 'string' ? row.title.trim() : '';
+  const prompt = typeof row.prompt === 'string' ? row.prompt.trim() : '';
+  const teacherQQ = typeof row.teacherQQ === 'string' ? row.teacherQQ.trim() || undefined : row.teacherQQ;
+  const worker = row.worker ?? prior?.worker ?? 'native';
+  if (typeof id !== 'string' || !/^[\w-]{1,80}$/.test(id) || !title || title.length > 100 || !prompt || prompt.length > 8000 ||
+      typeof weekday !== 'number' || !Number.isInteger(weekday) || weekday < 0 || weekday > 6 ||
+      typeof time !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time) || typeof enabled !== 'boolean' ||
+      (teacherQQ !== undefined && (typeof teacherQQ !== 'string' || !/^\d+$/.test(teacherQQ) || !engine.policy.isTeacher('qq:' + teacherQQ))) ||
+      !Array.isArray(tools) || tools.some(tool => !scheduledTools.includes(tool))) {
+    throw new DomainError('invalid', '任务名称、提示词、时间、教师或工具配置无效');
+  }
+  if ((worker !== 'native' && worker !== 'dsh') || (worker === 'native' && tools.some(tool => dshOnlyTools.has(tool))))
+    throw new DomainError('invalid', '此工具需要 DSH 执行方式');
+  if (worker === 'dsh' && !dshAvailable && enabled) throw new DomainError('unavailable', '此服务器尚未启用隔离 DSH Worker');
+  return { id, title, prompt, weekday, time, enabled, tools: [...new Set<ScheduledTool>(tools)], teacherQQ, worker,
+    enabledAt: prior?.enabled && prior.weekday === weekday && prior.time === time ? prior.enabledAt : engine.now() };
+}
 export function weeklyTasks(course: Course): WeeklyTask[] {
   if (course.weeklyTasks) return course.weeklyTasks;
   return course.weeklyLesson ? [{ ...course.weeklyLesson, id: 'legacy-lesson', title: '习题课讲义', enabled: true,
     prompt: '根据最新课程进度、近期作业和学生疑问，决定本周习题课重点并生成学生版和教师版讲义。',
     tools: ['class_context', 'prepare_lesson'] }] : [];
+}
+
+export function queueScheduleRun(engine: TaskEngine, course: Course, plan: WeeklyTask, source: string = randomUUID()) {
+  const key = 'manual-schedule:' + source;
+  return engine.receive({ sourceKey: key, externalId: key, courseId: course.id, threadId: key, actorId: 'web:admin',
+    channel: { kind: 'management', target: plan.title }, text: plan.prompt, receivedAt: engine.now(), scheduled: 'custom',
+    scheduledTools: plan.tools, scheduledWorker: plan.worker });
 }
 
 export class WeeklyLesson {
@@ -40,6 +69,7 @@ export class WeeklyLesson {
     this.checkedAt = now;
     for (const course of this.engine.store.courses()) for (const plan of weeklyTasks(course)) {
       if (!plan.enabled || (plan.teacherQQ && !this.engine.policy.isTeacher('qq:' + plan.teacherQQ))) continue;
+      if (!course.groupId && plan.tools.includes('send_group_file')) continue;
       const slot = weeklySlot(now, plan);
       if (slot < plan.enabledAt) continue;
       const jobKey = JSON.stringify([course.id, plan.id]);

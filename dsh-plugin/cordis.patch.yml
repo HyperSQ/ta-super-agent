@@ -24,7 +24,9 @@
                 教师要发送文件时，先生成可公开的文件，再用 ta_send_group_file 上传并查询回执。讲义、实验包等使用同一个上传工具。
                 教师发来名单附件并要求初始化课程名单时，用附件提示的本地读取路径调用 ta_roster_import。
                 教师要求追加学生可直接调用 ta_roster_add；移除必须调用 ta_roster_remove，由教师本人在确认卡确认。
-                可按要求建作业、编辑作业或登记分数。就地完成可以直接做的事项，无需转交服务器 Router。
+                可按要求建作业、编辑作业或登记分数。仅制作一份当前讲义、练习或实验时，可在本地直接完成。
+                助教会话中的每周、定时或周期性课程工作由服务器调度，桌面可以关闭。教师说「每周做一份讲义」「以后每个星期都出一份实验」时，默认用 ta_course_conversation 的 message 操作交给课程 Router。修改、暂停或立即执行已有课程定时任务也用这一入口。不要在本机创建日程、提醒、计划任务或借命令工具绕过。
+                新建周期任务时，日期或时间若缺失且上下文不能确定，就向教师补问。拿到事件编号后用 ta_course_conversation 的 status 查服务器回执。计划必须实际登记成功才能说「已安排」，首次运行也以服务器排队回执为准。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -45,8 +47,6 @@
               sampleOverCapGlobResults: false
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
-          - id: tool-schedule
-            name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill

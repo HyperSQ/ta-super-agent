@@ -10,6 +10,8 @@ import { Router } from '../src/agents/router.ts';
 import { TaskRunner } from '../src/application/task-runner.ts';
 import { courseworkWorker } from '../src/agents/workers/coursework-worker.ts';
 import { gradeDraft, rubric } from '../src/application/services/grading-draft.ts';
+import { classContext } from '../src/application/services/class-context.ts';
+import { studentCoursework } from '../src/application/services/student-coursework.ts';
 
 const now = Date.parse('2026-11-16T12:00:00+08:00');
 const cfg = { address: 'ta@mail.ustc.edu.cn', password: 'app-password-test', imapHost: 'mail.ustc.edu.cn',
@@ -89,6 +91,68 @@ test('邮箱原件去重、保留收件时间及附件，确认后统一登记�
   assert.equal(f.replies[0].text, '反馈正文');
   assert.equal(f.mail.read('math', id).feedback?.state, 'sent');
   assert.equal(f.store.pendingEvents().length, 0);
+});
+
+async function checkAutomaticGrading(t: import('node:test').TestContext, autoRegisterGrade: boolean) {
+  const f = setup();
+  t.after(() => f.store.close());
+  const assignment = f.ac.saveAssignment('web:admin', { ...f.assignment, title: '第1周作业', studentVisible: false,
+    gradingPolicy: '第一题 | 5 | 提供作答' });
+  f.mail.save('math', { ...cfg, autoGrade: true, autoRegisterGrade });
+  f.transport.fetch = async () => ({ cursor: { last: 12, validity: 3 }, messages: [
+    { ...email, subject: '作业 第1周作业 学生甲' },
+    { ...email, uid: 12, messageId: '<ambiguous@example.net>', subject: '作业 第1周作业 学生甲 补充' },
+  ] });
+  const messages = (await f.mail.sync('math')).messages;
+  const exact = messages.find(message => message.subject === '作业 第1周作业 学生甲')!;
+  const other = messages.find(message => message.id !== exact.id)!;
+  let calls = 0;
+  const model = { async complete() {
+    calls++;
+    return '{"points":[{"id":"第一题","score":5,"evidence":"作答正文","comment":"作答完整"}]}';
+  } };
+  const router = new Router(f.engine, model);
+  const runner = new TaskRunner(f.engine, courseworkWorker(f.engine, f.mail, model));
+  const routeIntake = async () => {
+    for (const event of f.store.pendingEvents().filter(event => event.mailIntake && !event.mailIntake.grade)) {
+      await router.route(event, new AbortController().signal);
+    }
+    runner.tick();
+    await runner.idle();
+  };
+  await routeIntake();
+  assert.equal(f.mail.read('math', exact.id).state, 'pending');
+  assert.equal(calls, 0);
+  f.ac.saveAssignment('web:admin', { ...assignment, studentVisible: true });
+  assert.equal(f.mail.reprocessIntake('math', exact.id).queued, true);
+  assert.equal(f.mail.reprocessIntake('math', exact.id).queued, false);
+  f.mail.reprocessIntake('math', other.id);
+  await routeIntake();
+  runner.tick();
+  await runner.idle();
+  const result = f.mail.read('math', exact.id);
+  assert.equal(result.state, 'registered');
+  assert.equal(result.grade?.draft.total, 5);
+  assert.equal(result.gradeRegistered, autoRegisterGrade);
+  assert.equal(f.mail.read('math', other.id).state, 'pending');
+  assert.equal(new CourseworkIntake(f.engine).list('math').requests.length, 1);
+  if (!autoRegisterGrade) {
+    f.mail.save('math', { ...cfg, revision: 1, password: '', autoRegisterGrade: true });
+    assert.equal(f.mail.requestGrade('math', exact.id).gradeRegistered, true);
+  }
+  assert.equal(f.mail.requestGrade('math', exact.id).gradeRegistered, true);
+  assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM audit WHERE kind='coursework.grade_registered'").get()?.n, 1);
+  assert.equal(f.store.db.prepare("SELECT json_extract(data,'$.graded.total') AS grade FROM coursework_requests").get()?.grade, 5);
+  assert.equal(calls, 1);
+  assert.equal(f.replies.length, 0);
+}
+
+test('自动批改可重跑归档邮件，开启自动登分前保存的草稿可直接登分', async t => {
+  await checkAutomaticGrading(t, false);
+});
+
+test('自动批改后直接登分，同一结果只登记一次', async t => {
+  await checkAutomaticGrading(t, true);
 });
 
 test('连接失败保留游标，冲突操作不重复运行，SMTP 结果不明不自动重试', async t => {
@@ -182,8 +246,19 @@ test('教师确认归属后生成逐点评分，作业改版会隐藏旧草稿�
   assert.equal(draft.grade?.draft.maximum, 5);
   assert.equal(draft.grading?.status, 'completed');
   assert.equal(f.replies.length, 0);
+  const intake = new CourseworkIntake(f.engine);
+  intake.bind('math', '21001', '学生甲');
+  assert.equal(studentCoursework(f.engine, 'math', 'qq:21001').assignments[0].score, undefined);
+  assert.throws(() => f.mail.registerGrade('math', message.id, 'old-draft'), /草稿已更新/);
+  assert.equal(f.mail.registerGrade('math', message.id, draft.gradeFingerprint!).gradeRegistered, true);
+  assert.equal(f.mail.registerGrade('math', message.id, draft.gradeFingerprint!).gradeRegistered, true);
+  const score = studentCoursework(f.engine, 'math', 'qq:21001').assignments[0];
+  assert.deepEqual([score.score, score.scoreMaximum], [3.5, 5]);
+  assert.deepEqual(classContext(f.engine, 'math', { days: 7 }).assignments[0].commonMissedPoints, [{ point: '第一题', count: 1 }]);
+  assert.equal(f.ac.offline(assignment.id).length, 0);
   f.ac.saveAssignment('web:admin', { ...assignment, gradingPolicy: '第一题 | 6 | 正确写出推导' });
   assert.equal(f.mail.read('math', message.id).grade, undefined);
+  assert.equal(studentCoursework(f.engine, 'math', 'qq:21001').assignments[0].score, undefined);
   await assert.rejects(f.mail.reply('math', message.id, '旧草稿反馈'), /过期/);
 });
 

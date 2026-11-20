@@ -75,22 +75,23 @@ function describe(task: Task, run: Run, outcome: TaskReportOutcome, error?: unkn
       : material ? `已完成「${taskLabel(task)}」` : `${taskLabel(task)}已处理`;
   const unresolved = outcome === 'waiting_teacher' ? ['教师尚未回答提问']
     : outcome === 'blocked' ? [`阻塞类别：${category}`]
-      : material && (task.artifacts?.length ?? 0) > 0 ? ['产物待教师查看'] : [];
+      : material && (!!task.result || (task.artifacts?.length ?? 0) > 0) ? ['产物待教师查看'] : [];
   const next: TaskReportNext = outcome === 'waiting_teacher' ? 'answer_teacher_question'
     : outcome === 'blocked' ? 'inspect_blocker'
-      : material && (task.artifacts?.length ?? 0) > 0 ? 'review_output' : 'none';
+      : material && (!!task.result || (task.artifacts?.length ?? 0) > 0) ? 'review_output' : 'none';
   return { kind: task.kind, summary, evidence: evidence.slice(0, 6), unresolved, next };
 }
 
 /** 必须由 finish/fail 在已有事务内调用；同一任务同一次运行只写一份。 */
 export function recordTaskReport(engine: TaskEngine, run: Run, outcome: TaskReportOutcome,
-  options: { task?: Task; error?: unknown } = {}): void {
+  options: { task?: Task; error?: unknown } = {}): TaskReportData | undefined {
   const task = options.task ?? engine.store.task(run.task.id);
   if (!task || task.grant.purpose) return;
   const data = describe(task, run, outcome, options.error);
-  engine.store.db.prepare('INSERT INTO task_reports(id,course_id,task_id,revision,input_epoch,run_id,at,outcome,data) ' +
+  const inserted = engine.store.db.prepare('INSERT INTO task_reports(id,course_id,task_id,revision,input_epoch,run_id,at,outcome,data) ' +
     'VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(task_id,run_id) DO NOTHING')
     .run(randomUUID(), task.courseId, task.id, run.revision, run.inputEpoch, run.lease, engine.now(), outcome, JSON.stringify(data));
+  return inserted.changes ? data : undefined;
 }
 
 type Row = { id: string; course_id: string; task_id: string; revision: number; input_epoch: number; run_id: string; at: number; outcome: string; data: string };
@@ -113,7 +114,7 @@ export function currentReports(store: Store, courseId: string, limit = 6): TaskR
   for (const report of courseReports(store, courseId, limit * 6)) {
     const task = tasks.get(report.taskId);
     if (!task || seen.has(task.id)) continue;
-    if (['cancelled', 'superseded'].includes(task.status)) continue;
+    if (task.status !== report.outcome) continue;
     if (task.revision !== report.revision || task.inputEpoch !== report.inputEpoch) continue;
     if (task.memoryContextInvalidated) continue;
     seen.add(task.id);

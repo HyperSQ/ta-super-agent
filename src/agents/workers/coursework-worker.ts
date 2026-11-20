@@ -6,6 +6,7 @@ import type { Model } from '../../ports/model.ts';
 import { gradeDraft, gradeSource } from '../../application/services/grading-draft.ts';
 
 const normalized = (text: string) => text.normalize('NFKC').toLowerCase();
+const normalizedSubject = (text: string) => normalized(text).trim().replace(/\s+/gu, ' ');
 function containsLabel(text: string, label: string) {
   const pattern = normalized(label.trim()).replace(/[.*+?^$(){}|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*');
   return !!pattern && new RegExp(pattern + (/\d$/.test(label) ? '(?!\\d)' : ''), 'u').test(normalized(text));
@@ -24,12 +25,12 @@ export function courseworkWorker(engine: TaskEngine, mail: CourseMail, model?: M
       run.assignmentReads = [{ id: input.assignment.id, revision: input.assignment.revision }];
       const source = await gradeSource(input.text, input.files, signal);
       const draft = await gradeDraft(model, { assignment: input.assignment.instructions, criteria: input.criteria, source }, signal);
-      const result = '逐评分点批改草稿已保存，待教师核对。';
-      engine.store.atomic(() => {
-        mail.saveGrade(origin, draft);
+      return engine.store.atomic(() => {
+        const registered = mail.saveGrade(origin, draft);
+        const result = registered ? `逐项批改已完成，已登记 ${draft.total}/${draft.maximum} 分。` : '逐评分点批改草稿已保存，待教师核对。';
         complete(result);
+        return result;
       });
-      return result;
     }
     const message = mail.read(courseId, messageId);
     if (message.state !== 'pending') return '教师已处理邮件。';
@@ -56,12 +57,14 @@ export function courseworkWorker(engine: TaskEngine, mail: CourseMail, model?: M
         suggestion.evidence.push('候选姓名来自主题或正文署名，需核对发件身份。');
       } else suggestion.evidence.push('需确认发件人对应的名单姓名。');
     }
-    const summary = suggestion.evidence.join('\n');
+    const exactSubject = suggestion.assignment && suggestion.studentName &&
+      normalizedSubject(message.subject) === normalizedSubject(`作业 ${suggestion.assignment.title} ${suggestion.studentName}`);
     signal.throwIfAborted();
-    engine.store.atomic(() => {
-      mail.suggest(courseId, messageId, suggestion);
+    return engine.store.atomic(() => {
+      const automated = mail.finishIntake(courseId, messageId, suggestion, !!model && !!exactSubject);
+      const summary = automated ?? suggestion.evidence.join('\n');
       complete(summary);
+      return summary;
     });
-    return summary;
   };
 }

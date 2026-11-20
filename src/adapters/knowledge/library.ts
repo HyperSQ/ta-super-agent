@@ -9,7 +9,7 @@ type Chunk = { id: string; text: string; page: number; printedPage?: string; cha
 type Parent = Chunk & { endPage: number };
 type Package = {
   version: string; chunks: Chunk[]; parents: Map<string, Parent>; childParents: Record<string, string[]>;
-  vectors?: number[][]; warnings: string[]; requiresVisual: boolean;
+  vectors?: number[][]; warnings: string[]; requiresVisual: boolean; sourceKind?: 'markdown';
 };
 const sha = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
@@ -26,7 +26,8 @@ export class TextbookLibrary implements Knowledge {
     if (manifest.id !== id || !Array.isArray(chunks) || !chunks.length || new Set(chunks.map(c => c.id)).size !== chunks.length
       || chunks.some(c => !c.id || typeof c.text !== 'string' || !Number.isInteger(c.page) || c.page < 1 || c.text.length > 20000)
       || (manifest.embedding?.chunksSha256 && sha(chunksRaw) !== manifest.embedding.chunksSha256)) throw new Error('教材子块或哈希校验失败');
-    const result: Package = { version: sha(chunksRaw), chunks, parents: new Map(), childParents: {}, warnings: [], requiresVisual: manifest.needsVisualVerification !== false };
+    const result: Package = { version: sha(chunksRaw), chunks, parents: new Map(), childParents: {}, warnings: [], requiresVisual: manifest.needsVisualVerification !== false,
+      ...(manifest.sourceKind === 'markdown' ? { sourceKind: 'markdown' } : {}) };
     try {
       const h = JSON.parse(readFileSync(join(dir, 'hierarchy.json'), 'utf8')) as { parents: Parent[]; childParents: Record<string, string[]>; chunksSha256?: string; pagesSha256?: string };
       if (!Array.isArray(h.parents) || !h.childParents || (h.chunksSha256 && h.chunksSha256 !== result.version)
@@ -75,6 +76,7 @@ export class TextbookLibrary implements Knowledge {
           contextStartPage: parent?.page ?? chunk.page,
           endPage: parent?.endPage ?? chunk.page, chapter: chunk.chapter ?? '',
           text: parent?.text ?? chunk.text,
+          ...(data.sourceKind ? { sourceKind: data.sourceKind } : {}),
           needsVisualVerification: data.requiresVisual || chunk.needsVisualVerification === true,
           reasons: [...(lexical.some(h => h.id === chunk.id) ? ['bm25'] : []), ...(vectors.some(h => h.id === chunk.id) ? ['vector'] : [])],
         } });

@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { currentActivity } from '../../application/activities.ts';
+import { weeklyReport } from '../../application/services/weekly-report.ts';
 import { classContext } from '../../application/services/class-context.ts';
 import { DSH, maxHandoutBytes } from '../../application/services/dsh.ts';
 import { askTeacher } from '../../application/services/teacher-inquiry.ts';
@@ -28,6 +29,7 @@ const qaNames = new Set(['list_assignments', 'read_assignment', 'lookup_textbook
 const definitions = [
   ...qaToolDefinitions.filter(({ function: fn }) => qaNames.has(fn.name))
     .map(({ function: fn }) => ({ name: fn.name, description: fn.description, inputSchema: fn.parameters })),
+  tool('weekly_report', '读取近七日提交、迟交、延期及线下登记的脱敏统计'),
   tool('class_context', '读取课程进度与近期课堂概况'),
   tool('read_messages', '查本课程公开群消息和助教回复'),
   tool('read_attachment', '按公开消息的 eventId 和附件序号读取图片，其他文件保存到工作目录', { eventId: input('群消息事件 ID'), index: { type: 'integer', minimum: 1 } }, ['eventId', 'index']),
@@ -135,10 +137,11 @@ export function dshWorker(engine: TaskEngine, qa: QATools, service: DSH, lesson:
         return typeof result === 'string' ? [{ type: 'text', text: result }] : result.map(item =>
           item.type === 'text' ? item : { type: 'image', mimeType: item.image_url.url.split(';')[0].slice(5), data: item.image_url.url.split(',')[1] });
       }
+      if (name === 'weekly_report') return text(weeklyReport(engine, courseId));
       if (name === 'class_context') {
         const overview = classContext(engine, courseId, { days: 7 });
         return text({ course: overview.course, coverage: overview.coverage,
-          assignments: overview.assignments.filter(a => a.studentVisible), recentQuestions: overview.group.recentMessages.slice(0, 8).map(m => m.excerpt) });
+          assignments: overview.assignments.filter(a => a.studentVisible), passiveQuestions: overview.group.passiveQuestions.slice(0, 8), recentQuestions: overview.group.recentMessages.slice(0, 8).map(m => m.excerpt) });
       }
       if (name === 'read_messages') return text(service.messages(courseId, { teacher: false }));
       if (name === 'read_attachment') {

@@ -2,7 +2,7 @@ let scheduleEditor;
 const scheduleTools = {
   class_context: '查看近期课程、作业和群聊', list_assignments: '列出课程作业',
   read_assignment: '查看作业题目', lookup_textbook: '按章节与题号查教材',
-  search_textbook: '按主题检索教材', textbook_section: '按节号查教材范围', view_textbook_page: '查看教材原页', prepare_lesson: '生成习题课讲义',
+  search_textbook: '按主题检索教材', textbook_section: '按节号查教材范围', view_textbook_page: '查看教材原页', prepare_lesson: '生成习题课讲义', weekly_report: '读取课程周报统计',
   read_messages: '读课程群消息', read_attachment: '读附件', ask_teacher: '私信课程教师', send_group_file: '发送课程群文件',
 };
 const scheduleRoute = id => `/v1/courses/${encodeURIComponent(id)}/schedules`;

@@ -34,6 +34,10 @@ export class Store {
     this.db.exec(readFileSync(new URL('../../../migrations/022-course-files.sql', import.meta.url), 'utf8'));
     this.db.exec(readFileSync(new URL('../../../migrations/023-submission-files.sql', import.meta.url), 'utf8'));
     this.db.exec(readFileSync(new URL('../../../migrations/024-router-sessions.sql', import.meta.url), 'utf8'));
+    if (this.db.prepare("SELECT 1 FROM pragma_index_list('grading_batches') WHERE origin='u'").get()) {
+      const migration = readFileSync(new URL('../../../migrations/025-grading-batch-rounds.sql', import.meta.url), 'utf8');
+      this.atomic(() => this.db.exec(migration));
+    }
   }
   atomic<T>(fn: () => T): T {
     if (this.db.isTransaction) {

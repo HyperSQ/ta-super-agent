@@ -25,6 +25,7 @@ function courseworkPage() {
   const cards = coursework.requests.map(row => `<section class="card">
     <div class="card-title"><h2>${escape(title(row.assignmentId))} · ${row.kind === 'extension' ? '延期' : row.source === 'mail' ? '邮件提交' : 'QQ 提交'}</h2>${pill(({pending:'待核对',accepted:'已登记',declined:'已拒绝'})[row.state])}</div>
     <p>${escape(row.name)}${row.source === 'mail' ? '' : ' · QQ ' + escape(row.actor.replace(/^qq:/, ''))} · ${escape(fmt(row.receivedAt))}${row.attempt ? ' · 第 ' + row.attempt + ' 次提交' : ''}${row.late ? ' · 迟交' : ''}</p>
+    ${row.graded ? `<p>登记成绩 ${escape(row.graded.total)} / ${escape(row.graded.maximum)}</p>` : ''}
     ${row.deadline ? `<p class="muted">申请截止 ${escape(fmt(row.deadline))} · ${escape(row.reason)}</p>` : ''}
     ${row.decisionNote ? `<p class="muted">${escape(row.decisionNote)}</p>` : ''}
     <div class="row section-gap">${(row.files ?? []).map(file => `<button class="button secondary small" data-action="coursework-file" data-id="${escape(row.id)}" data-index="${file.index}">${escape(file.name)}</button>`).join('')}

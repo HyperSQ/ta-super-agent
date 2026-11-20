@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { fixture } from './helpers.ts';
+import { deferred, fixture } from './helpers.ts';
 import { Academics } from '../src/application/services/academics.ts';
 import { CourseMail } from '../src/application/services/course-mail.ts';
 import { CourseworkIntake } from '../src/application/services/coursework-intake.ts';
@@ -85,4 +85,57 @@ test('驳回后不改提交、不发回信', async () => {
   assert.equal(fake.replies.length, 0);
   await assert.rejects(() => batches.approve('math', batch.id), /已经处理/);
   f.store.close();
+});
+
+test('草稿在截止后才就绪时仍生成原节点批次', () => {
+  const { f, batches, now, message } = setup();
+  try {
+    const db = f.store.db;
+    db.prepare("UPDATE course_mail_messages SET data=json_remove(data,'$.grade') WHERE id=?").run(message.id);
+    assert.deepEqual(batches.tick(now), []);
+    db.prepare('UPDATE course_mail_messages SET data=? WHERE id=?').run(JSON.stringify(message), message.id);
+    const [batch] = batches.tick(now + 1);
+    assert.equal(batch.items[0].messageId, message.id);
+    assert.deepEqual(batches.tick(now + 2), []);
+  } finally { f.store.close(); }
+});
+
+test('重批后的旧批次不发送，新草稿按原节点补批', async () => {
+  const { f, fake, batches, now, message, assignment } = setup();
+  try {
+    const [old] = batches.tick(now);
+    const current = new Academics(f.engine).saveAssignment('web:admin', { ...assignment, gradingPolicy: 'p1 | 10 | 新评分说明' });
+    const draft = { ...message.grade.draft, total: 2, points: [{ ...message.grade.draft.points[0], score: 2 }] };
+    const revised = { ...message, grade: { ...message.grade, assignmentRevision: current.revision, draft } };
+    f.store.db.prepare('UPDATE course_mail_messages SET data=? WHERE id=?').run(JSON.stringify(revised), message.id);
+    await assert.rejects(() => batches.approve('math', old.id), /草稿已变更/);
+    assert.equal(fake.replies.length, 0);
+    const [replacement] = batches.tick(now + 1);
+    assert.equal(replacement.nodeAt, old.nodeAt);
+    assert.equal(replacement.items[0].total, 2);
+    assert.equal((await batches.approve('math', replacement.id)).sent, 1);
+    assert.match(fake.replies[0].text, /批改结果：2\/10/);
+  } finally { f.store.close(); }
+});
+
+test('批准开始发送后，其他入口不能再批准或驳回同一批次', async () => {
+  const { f, batches, now, fake } = setup();
+  try {
+    const [batch] = batches.tick(now);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    fake.reply = async (_credentials, message) => {
+      entered.resolve();
+      await release.promise;
+      fake.replies.push(message);
+    };
+    const approval = batches.approve('math', batch.id);
+    try {
+      await entered.promise;
+      assert.throws(() => batches.reject('math', batch.id), /正在发送/);
+      await assert.rejects(() => batches.approve('math', batch.id), /正在发送/);
+    } finally { release.resolve(); }
+    assert.equal((await approval).sent, 1);
+    assert.equal(fake.replies.length, 1);
+  } finally { f.store.close(); }
 });

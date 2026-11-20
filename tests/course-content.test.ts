@@ -11,7 +11,7 @@ const signal = new AbortController().signal;
 function publish(f: ReturnType<typeof fixture>, taskId: string, eventId: string) {
   const task = f.store.task(taskId)!;
   const delivery: Delivery = { id: randomUUID(), taskId, revision: task.revision, inputEpoch: task.inputEpoch,
-    replyEventId: eventId, channel: { kind: 'qq-group', target: '100' }, text: '讲义', status: 'sent', sentAt: f.engine.now() };
+    replyEventId: eventId, channel: { kind: 'qq-group', target: '100' }, text: task.result!, status: 'sent', sentAt: f.engine.now() };
   f.store.saveDelivery(delivery);
 }
 
@@ -59,4 +59,21 @@ test('内容工具按引用检索和打开，不跨课程', async () => {
   const wrong = JSON.parse(await tools.call(run, 'open_course_content', JSON.stringify({ ref: 'task/不存在/result' }), signal, false) as string);
   assert.match(wrong.error, /找不到/);
   f.store.close();
+});
+
+test('群里只发过旧版时，搜索和旧引用都不能打开当前草稿', () => {
+  const f = fixture();
+  try {
+    const event = f.receive('讲义', { actorId: 'web:admin' });
+    const task = f.engine.createTask(event.id, 'lesson', '仅供教师的备注');
+    f.store.saveTask({ ...task, status: 'completed', result: '群发第一版' });
+    publish(f, task.id, event.id);
+    const materials = new CourseContent(f.engine);
+    const [published] = materials.search('math', 'qq:1', '第一版');
+    assert.equal(published.title, '群发第一版');
+    f.store.saveTask({ ...task, revision: 2, status: 'completed', result: '教师专用第二版' });
+    assert.throws(() => materials.open('math', 'qq:1', published.ref), /还没有发布/);
+    assert.equal(materials.search('math', 'qq:1', '第二版').length, 0);
+    assert.equal(materials.search('math', 'web:admin', '第二版', { teacher: true }).length, 1);
+  } finally { f.store.close(); }
 });

@@ -18,6 +18,10 @@ type Message = Omit<ReceivedMail, 'uid' | 'files'> & {
   grade?: { assignmentRevision: number; submissionId: string; draft: GradeDraft };
   gradingEventId?: string;
 };
+function gradingFingerprint(message: Message): string {
+  return createHash('sha256').update(JSON.stringify([message.submissionId, message.grade])).digest('hex');
+}
+
 export type MailSuggestion = {
   assignment?: { id: string; title: string; revision: number };
   studentName?: string;
@@ -98,12 +102,16 @@ export class CourseMail {
     };
     const address = field('address', 254), imapHost = field('imapHost', 253).toLowerCase(), smtpHost = field('smtpHost', 253).toLowerCase();
     const folder = field('folder', 128), prefix = field('prefix', 100), password = field('password', 400);
-    const { enabled, smtpMode } = input;
+    const { enabled, smtpMode, autoGrade, autoRegisterGrade } = input;
     if (!addressPattern.test(address) || !hostPattern.test(imapHost) || !hostPattern.test(smtpHost)) throw invalid('请输入完整邮箱地址和服务器域名');
     if (!/^[\x20-\x7e]+$/.test(folder) || /["\\]/.test(folder) || !prefix) throw invalid('请填写邮箱文件夹和作业邮件主题前缀');
     if (typeof enabled !== 'boolean' || (smtpMode !== 'tls' && smtpMode !== 'starttls')) throw invalid('请选择轮询状态和发件加密方式');
+    if (autoGrade !== undefined && typeof autoGrade !== 'boolean') throw invalid('请选择自动批改状态');
+    if (autoRegisterGrade !== undefined && typeof autoRegisterGrade !== 'boolean') throw invalid('请选择自动登分状态');
     const settings: MailSettings = {
       address, imapHost, imapPort: port('imapPort'), folder, smtpHost, smtpPort: port('smtpPort'), smtpMode, prefix, enabled,
+      autoGrade: autoGrade ?? previous?.autoGrade ?? false,
+      autoRegisterGrade: autoRegisterGrade ?? previous?.autoRegisterGrade ?? false,
       revision: (previous?.revision ?? 0) + 1, since: previous?.since ?? this.engine.now(),
     };
     if (!password && (!previous || endpoints(settings) !== endpoints(previous))) throw invalid('首次设置或更换服务器、邮箱时，请填写客户端专用密码');
@@ -162,10 +170,21 @@ export class CourseMail {
     if (!this.db.prepare('INSERT OR IGNORE INTO course_mail_messages VALUES(?,?,?,?,?)')
       .run(id, courseId, key, mail.receivedAt, JSON.stringify(message)).changes) return;
     copies.forEach((file, i) => this.db.prepare('INSERT INTO course_mail_files VALUES(?,?,?,?)').run(id, i + 1, file.name, file.bytes));
-    const eventKey = 'course-mail:received:' + id;
-    this.engine.receive({ sourceKey: eventKey, externalId: eventKey, threadId: eventKey, courseId, actorId: 'web:admin',
+    this.queueIntake(courseId, message, 'course-mail:received:' + id);
+  }
+  private queueIntake(courseId: string, message: Message, eventKey: string) {
+    const { duplicate } = this.engine.receive({ sourceKey: eventKey, externalId: eventKey, threadId: eventKey, courseId, actorId: 'web:admin',
       channel: { kind: 'management', target: 'course-mail' }, text: '收到新的作业邮件',
-      receivedAt: mail.receivedAt, mailIntake: { messageId: id } });
+      receivedAt: message.receivedAt, mailIntake: { messageId: message.id } });
+    return { queued: !duplicate };
+  }
+  reprocessIntake(course: string, id: string) {
+    const message = this.message(course, id);
+    if (message.state !== 'pending') return { queued: false };
+    const settings = parse<MailSettings>(this.configured(course).data);
+    const assignments = new Academics(this.engine).visibleAssignments(course);
+    const version = digest([settings.revision, this.course(course).roster, assignments]);
+    return this.queueIntake(course, message, `course-mail:reprocess:${id}:${version}`);
   }
   private message(course: string, id: string) {
     const row = this.db.prepare('SELECT data FROM course_mail_messages WHERE course_id=? AND id=?').get(course, id);
@@ -178,7 +197,10 @@ export class CourseMail {
     const task = message.gradingEventId && this.engine.store.tasks().find(t => t.grant.originEventId === message.gradingEventId);
     const grading = task ? { status: task.status, error: task.error } : message.gradingEventId ? { status: 'queued' } : undefined;
     const grade = message.grade && this.gradeIsCurrent(course, original, message.grade.assignmentRevision) ? message.grade : undefined;
-    return { ...message, grade, grading };
+    const submitted = this.db.prepare('SELECT data FROM coursework_requests WHERE course_id=? AND id=?').get(course, message.submissionId ?? '');
+    const registered = submitted ? parse<{ graded?: { fingerprint: string } }>(submitted.data).graded : undefined;
+    return { ...message, grade, grading, gradeFingerprint: grade ? gradingFingerprint(original) : undefined,
+      gradeRegistered: !!grade && registered?.fingerprint === gradingFingerprint(original) };
   }
   private submission(course: string, message: Message) {
     if (!message.submissionId || message.state !== 'registered') throw invalid('请先确认邮件所属作业和学生');
@@ -196,17 +218,39 @@ export class CourseMail {
       return new Academics(this.engine).visibleAssignment(course, String(submission.assignment_id)).revision === revision;
     } catch { return false; }
   }
-  requestGrade(course: string, id: string) {
+  registerGrade(course: string, id: string, expected: string) {
+    return this.engine.store.atomic(() => {
+      const message = this.message(course, id);
+      const submission = this.submission(course, message);
+      const assignment = new Academics(this.engine).visibleAssignment(course, String(submission.assignment_id));
+      const grade = message.grade;
+      if (!grade || grade.assignmentRevision !== assignment.revision || grade.submissionId !== submission.id ||
+          expected !== gradingFingerprint(message)) throw new DomainError('stale', '批改草稿已更新，请重新核对');
+      const previous = parse<{ graded?: { fingerprint: string } }>(submission.data);
+      if (previous.graded?.fingerprint === expected) return this.read(course, id);
+      const graded = { fingerprint: expected, assignmentRevision: assignment.revision, total: grade.draft.total, maximum: grade.draft.maximum,
+        at: this.engine.now(), missed: grade.draft.points.filter(point => point.score < point.max).map(point => point.id) };
+      this.db.prepare('UPDATE coursework_requests SET data=? WHERE course_id=? AND id=?')
+        .run(JSON.stringify({ ...previous, graded }), course, String(submission.id));
+      this.engine.store.audit('coursework.grade_registered', { courseId: course, assignmentId: assignment.id, submissionId: submission.id, total: graded.total });
+      return this.read(course, id);
+    });
+  }
+  requestGrade(course: string, id: string, automatic = false) {
     return this.engine.store.atomic(() => {
       const message = this.message(course, id), submission = this.submission(course, message);
       const assignment = new Academics(this.engine).visibleAssignment(course, String(submission.assignment_id));
       rubric(assignment.gradingPolicy);
       const current = message.gradingEventId && this.engine.store.tasks().find(t => t.grant.originEventId === message.gradingEventId);
       if (current && ['queued', 'running'].includes(current.status)) return this.read(course, id);
-      if (message.grade && this.gradeIsCurrent(course, message, message.grade.assignmentRevision)) return this.read(course, id);
+      if (message.grade && this.gradeIsCurrent(course, message, message.grade.assignmentRevision)) {
+        if (this.shouldAutoRegisterGrade(course, message)) return this.registerGrade(course, id, gradingFingerprint(message));
+        return this.read(course, id);
+      }
       const key = 'course-mail:grade:' + randomUUID();
       const { event } = this.engine.receive({ sourceKey: key, externalId: key, threadId: key, courseId: course, actorId: 'web:admin',
-        channel: { kind: 'management', target: 'course-mail' }, text: '教师请求生成批改草稿', receivedAt: this.engine.now(),
+        channel: { kind: 'management', target: 'course-mail' }, text: automatic ? '邮件作业自动排队批改' : '教师请求生成批改草稿',
+        receivedAt: this.engine.now(),
         mailIntake: { messageId: id, grade: { submissionId: String(submission.id), assignmentId: assignment.id, assignmentRevision: assignment.revision } } });
       this.engine.createTask(event.id, 'coursework', '逐题生成邮件作业批改草稿');
       this.update({ ...message, gradingEventId: event.id });
@@ -228,7 +272,7 @@ export class CourseMail {
   batchCandidates(course: string, nodeAt: number) {
     const rows = this.db.prepare('SELECT data FROM course_mail_messages WHERE course_id=?').all(course) as { data: string }[];
     const out: { id: string; subject: string; from: string; receivedAt: number; submissionId: string;
-      assignmentId: string; assignmentTitle: string; studentName: string; draft: GradeDraft }[] = [];
+      assignmentId: string; assignmentTitle: string; studentName: string; fingerprint: string; draft: GradeDraft }[] = [];
     for (const row of rows) {
       const message = parse<Message>(row.data);
       if (message.state !== 'registered' || message.feedback || !message.grade || !message.submissionId || message.receivedAt > nodeAt) continue;
@@ -240,17 +284,55 @@ export class CourseMail {
         .get(course, submission.assignment_id) as { title?: string } | undefined;
       out.push({ id: message.id, subject: message.subject, from: message.from, receivedAt: message.receivedAt,
         submissionId: message.submissionId!, assignmentId: String(submission.assignment_id), assignmentTitle: String(assignment?.title ?? ''),
-        studentName: String(submission.student_name), draft: message.grade.draft });
+        studentName: String(submission.student_name), fingerprint: gradingFingerprint(message), draft: message.grade.draft });
     }
     return out;
   }
   saveGrade(event: Event, draft: GradeDraft) {
-    const { message, assignment } = this.gradingInput(event);
-    this.update({ ...message, grade: { assignmentRevision: assignment.revision, submissionId: message.submissionId!, draft } });
+    return this.engine.store.atomic(() => {
+      const { message, assignment } = this.gradingInput(event);
+      message.grade = { assignmentRevision: assignment.revision, submissionId: message.submissionId!, draft };
+      this.update(message);
+      if (!this.shouldAutoRegisterGrade(event.courseId, message)) return false;
+      this.registerGrade(event.courseId, message.id, gradingFingerprint(message));
+      return true;
+    });
   }
-  suggest(course: string, id: string, suggestion: MailSuggestion) {
+  private shouldAutoRegisterGrade(course: string, message: Message) {
+    const mailbox = this.row(course);
+    return !!mailbox && message.mailbox === mailbox.mailbox_key && parse<MailSettings>(mailbox.data).autoRegisterGrade === true;
+  }
+  finishIntake(course: string, id: string, suggestion: MailSuggestion, canGrade: boolean) {
     const message = this.message(course, id);
-    if (message.state === 'pending') this.update({ ...message, suggestion });
+    if (message.state !== 'pending') return;
+    message.suggestion = suggestion;
+    const { assignment, studentName } = suggestion;
+    if (canGrade && assignment && studentName && this.canAutoGrade(course, message, assignment.id, studentName, suggestion.evidence)) {
+      this.registerSubmission(course, message, assignment.id, studentName, true);
+      this.update(message);
+      this.requestGrade(course, id, true);
+      return '已自动登记提交并排队生成批改草稿。';
+    }
+    this.update(message);
+  }
+  private canAutoGrade(course: string, message: Message, assignmentId: string, studentName: string, evidence: string[]) {
+    const mailbox = this.row(course);
+    if (!mailbox || message.mailbox !== mailbox.mailbox_key || !parse<MailSettings>(mailbox.data).autoGrade || message.issue) return false;
+    const assignment = new Academics(this.engine).visibleAssignment(course, assignmentId);
+    try { rubric(assignment.gradingPolicy); }
+    catch (error) {
+      if (!(error instanceof DomainError)) throw error;
+      evidence.push('评分细则未配置或格式有误，需人工处理。');
+      return false;
+    }
+    const recent = this.db.prepare(`SELECT 1 FROM coursework_requests WHERE course_id=? AND assignment_id=?
+      AND student_name=? AND kind='submission' AND state='accepted' AND json_extract(data,'$.receivedAt')>? LIMIT 1`)
+      .get(course, assignment.id, studentName, message.receivedAt);
+    if (recent) {
+      evidence.push('已有更新的提交，需核对这封邮件。');
+      return false;
+    }
+    return true;
   }
   file(course: string, id: string, index: number) {
     this.message(course, id);
@@ -261,30 +343,32 @@ export class CourseMail {
   private update(message: Message) {
     this.db.prepare('UPDATE course_mail_messages SET data=? WHERE id=?').run(JSON.stringify(message), message.id);
   }
+  private registerSubmission(course: string, message: Message, assignment: string, name: string, automatic = false) {
+    if (message.issue) throw invalid('这封邮件的内容不完整，请核对原邮件后向学生索取完整版本');
+    const files = this.db.prepare('SELECT name,content FROM course_mail_files WHERE mail_id=? ORDER BY position').all(message.id)
+      .map(row => ({ name: String(row.name), bytes: Buffer.from(row.content as Uint8Array) }));
+    if (files.length === 0 && message.text.trim()) files.push({ name: '邮件正文.txt', bytes: Buffer.from(message.text) });
+    const submission = this.coursework.registerMail(course, message, assignment, name, files, automatic);
+    message.submissionId = submission.id;
+    message.state = 'registered';
+  }
   review(course: string, id: string, assignment: string, name: string, ignore: boolean) {
     return this.engine.store.atomic(() => {
       const message = this.message(course, id);
       if (message.state !== 'pending') throw new DomainError('stale', '这封邮件已经处理');
       if (ignore) message.state = 'ignored';
-      else {
-        if (message.issue) throw invalid('这封邮件的内容不完整，请核对原邮件后向学生索取完整版本');
-        const files = this.db.prepare('SELECT name,content FROM course_mail_files WHERE mail_id=? ORDER BY position').all(id)
-          .map(row => ({ name: String(row.name), bytes: Buffer.from(row.content as Uint8Array) }));
-        if (files.length === 0 && message.text.trim()) files.push({ name: '邮件正文.txt', bytes: Buffer.from(message.text) });
-        const submission = this.coursework.registerMail(course, message, assignment, name, files);
-        message.submissionId = submission.id;
-        message.state = 'registered';
-      }
+      else this.registerSubmission(course, message, assignment, name);
       this.update(message);
       return this.get(course);
     });
   }
-  reply(course: string, id: string, text: string) {
+  reply(course: string, id: string, text: string, expectedGrade?: string) {
     if (!text.trim() || text.length > 12000) throw invalid('请输入反馈内容（最多 12,000 字）');
     return this.exclusive(course, async () => {
       const message = this.message(course, id), row = this.configured(course);
       if (message.state !== 'registered' || message.feedback) throw new DomainError('conflict', '邮件未登记或已有反馈发送记录');
-      if (message.grade && !this.gradeIsCurrent(course, message, message.grade.assignmentRevision))
+      if ((expectedGrade && (!message.grade || gradingFingerprint(message) !== expectedGrade)) ||
+          (message.grade && !this.gradeIsCurrent(course, message, message.grade.assignmentRevision)))
         throw new DomainError('stale', '这份批改草稿已过期，请处理最新提交或重新批改');
       if (!addressPattern.test(message.from) || message.mailbox !== row.mailbox_key) throw invalid('发件地址无效或当前邮箱与原收件邮箱不一致');
       const credentials = this.open(course, row);

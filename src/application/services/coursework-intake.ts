@@ -12,6 +12,7 @@ type Request = Draft & {
   deadline?: string; reason?: string; effectiveDeadline?: string; late?: boolean;
   attempt?: number; files?: { index: number; name: string; bytes: number }[]; decisionNote?: string;
   source?: 'mail'; mailId?: string;
+  graded?: { fingerprint: string; assignmentRevision: number; total: number; maximum: number; at: number; missed: string[] };
 };
 const invalid = (message: string) => new DomainError('invalid', message);
 const iso = (value: string) => /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : undefined;
@@ -127,14 +128,14 @@ export class CourseworkIntake {
     this.save(row);
   }
   registerMail(courseId: string, mail: { id: string; receivedAt: number },
-    assignmentId: string, name: string, files: { name: string; bytes: Buffer }[]) {
+    assignmentId: string, name: string, files: { name: string; bytes: Buffer }[], automatic = false) {
     this.academics.visibleAssignment(courseId, assignmentId);
     if (!this.engine.store.course(courseId)?.roster?.includes(name)) throw invalid('请选择本课程名单中的学生');
     const key = 'mail-submission:' + mail.id;
     return this.engine.store.atomic(() => {
       const { event, duplicate } = this.engine.receive({
         sourceKey: key, externalId: key, courseId, threadId: key, actorId: 'web:admin',
-        channel: { kind: 'management', target: 'admin' }, text: '教师已核对的邮件作业',
+        channel: { kind: 'management', target: 'admin' }, text: automatic ? '助教自动登记邮件作业' : '教师已核对的邮件作业',
         receivedAt: mail.receivedAt,
       }, true);
       if (duplicate) throw new DomainError('conflict', '这封邮件已经登记');
@@ -160,11 +161,14 @@ export class CourseworkIntake {
     return { requests, offline };
   }
   file(courseId: string, requestId: string, index: number) {
+    const db = this.engine.store.db;
+    if (!db.prepare('SELECT 1 FROM coursework_requests WHERE id=? AND course_id=?').get(requestId, courseId))
+      throw new DomainError('not_found', '未找到该提交附件');
     const fromDisk = this.submissions?.read(requestId, index);
     if (fromDisk) return { name: fromDisk.name, data: fromDisk.content.toString('base64') };
     const item = this.engine.store.db.prepare(`SELECT f.name,f.content FROM coursework_submission_files f
       JOIN coursework_requests r ON f.request_id=r.id WHERE r.course_id=? AND f.request_id=? AND f.position=?`).get(courseId, requestId, index);
-    if (!item || !(item.content instanceof Uint8Array)) throw new DomainError('not_found', '未找到该提交附件');
+    if (!item || !(item.content instanceof Uint8Array) || !item.content.length) throw new DomainError('not_found', '未找到该提交附件');
     return { name: String(item.name), data: Buffer.from(item.content).toString('base64') };
   }
   review(courseId: string, id: string, revision: number, accept: boolean, note: string) {

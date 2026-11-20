@@ -52,6 +52,7 @@ export function buildRouterContext(engine: TaskEngine, event: Event): CoursePlan
   const reports: PlanReport[] = [];
   let sensitive = 0;
   for (const report of currentReports(store, course.id, 12)) {
+    if (report.at < (course.teacherHistoryStartAt ?? 0)) continue;
     const task = store.task(report.taskId);
     if (!task || !visible(engine, task)) continue;
     if (isSensitiveReport(report.data.kind)) { sensitive++; continue; }

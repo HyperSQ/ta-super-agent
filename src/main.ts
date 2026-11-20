@@ -36,6 +36,7 @@ import { Watchdog } from './application/watchdog.ts';
 import { GradingBatches } from './application/grading-batches.ts';
 import { CourseFiles } from './application/services/course-files.ts';
 import { GroupFiles } from './application/services/group-files.ts';
+import { CourseworkIntake } from './application/services/coursework-intake.ts';
 import { SubmissionFiles } from './application/services/submission-files.ts';
 import { dirname, join } from 'node:path';
 
@@ -65,10 +66,12 @@ const runScheduled: typeof nativeScheduled = context => {
   if (!headless) throw Error('此服务器尚未启用隔离 DSH Worker');
   return headless(context);
 };
-const mail = new CourseMail(engine, new PythonMailTransport(), mailKey(config.databasePath),
-  new SubmissionFiles(engine, join(filesRoot, 'submission')));
+const submissionFiles = new SubmissionFiles(engine, join(filesRoot, 'submission'));
+const coursework = new CourseworkIntake(engine, submissionFiles);
+const mail = new CourseMail(engine, new PythonMailTransport(), mailKey(config.databasePath), submissionFiles);
 const batches = new GradingBatches(engine, mail);
-const router = new Router(engine, model, references, batches);
+const router = new Router(engine, model, references, batches, coursework,
+  { dshAvailable: !!headless, groupSending: config.sendEnabled });
 const workers = {
   qa: answer, lesson: prepareLesson, scheduled: runScheduled,
   'teaching-affairs': teachingAffairsWorker(router.teacherWork), coursework: courseworkWorker(engine, mail, model),
@@ -78,11 +81,12 @@ const sender = new LLBotSender(config.llbotUrl, config.llbotToken, qqAccess, pro
 sender.loadFile = (course, id) => store.teachingFile(course, id);
 const outbox = new DeliveryOutbox(engine, sender, config.sendEnabled);
 const runtime = new Runtime(engine, router, runner, outbox, new ThreadClassifier(engine, model), new MemoryUpdater(engine, model, memory),
-  { batchMs: config.batchMs, watchdog: new Watchdog(engine), batches });
-const server = createApi(engine, config, qqAccess, qaTools, attachments, mail, batches, groupFiles);
+  { batchMs: config.batchMs, watchdog: new Watchdog(engine), batches: { tick: now => batches.scan(now) } });
+const server = createApi(engine, config, qqAccess, qaTools, attachments, mail, batches, groupFiles, coursework, config.libraryPath);
 server.listen(config.port, config.host, () => {
-  runtime.start();
   mail.start();
+  batches.recover();
+  runtime.start();
   console.log(`助教服务 http://${config.host}:${config.port}，QQ外发${config.sendEnabled ? '已开启' : '关闭（结果留在交付队列）'}`);
 });
 server.on('error', error => { console.error('服务启动失败：', error.message); store.close(); process.exitCode = 1; });

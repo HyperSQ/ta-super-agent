@@ -23,6 +23,7 @@ function mailMessageCard(screen, message) {
      <label>作业<select name="assignmentId" required><option value="">请选择</option>${choices(assignments)}</select></label>
      <label>学生<select name="name" required><option value="">请选择</option>${choices(screen.roster.map(name => [name, name]))}</select></label>
      <div class="row"><button class="button small" ${message.issue || !assignments.length ? 'disabled' : ''}>登记提交</button>
+     <button type="button" class="button secondary small" data-action="course-mail-reprocess" data-id="${id}">重新匹配</button>
      <button type="button" class="button secondary small" data-action="course-mail-ignore" data-id="${id}">忽略此邮件</button></div></form>` : '';
   const grading = entry?.grading;
   const draft = entry?.grade?.draft;
@@ -33,6 +34,8 @@ function mailMessageCard(screen, message) {
       (point.evidence ? '<br><small>作答原文：' + escape(point.evidence) + '</small>' : '') + '</p>').join('')
       : '<p class="muted">' + escape(grading?.error || (active ? '正在生成草稿，请刷新邮件查看状态。' : '支持文本和有文字层的 PDF。评分细则每行写「评分点 | 满分 | 判分依据」。')) + '</p>'}
     ${!draft && !active ? `<button type="button" class="button secondary small" data-action="course-mail-grade" data-id="${id}">生成草稿</button>` : ''}
+    ${draft && entry.gradeFingerprint ? entry.gradeRegistered ? '<p class="muted">成绩已登记</p>' :
+      `<button type="button" class="button secondary small" data-action="course-mail-register-grade" data-id="${id}">登记此成绩</button>` : ''}
     <button type="button" class="button ghost small" data-action="course-mail-open" data-id="${id}">刷新邮件</button>
   </details>` : '';
   const feedbackText = draft ? draft.points.map(point => point.id + '：' + point.comment).join('\n') : '';
@@ -71,6 +74,8 @@ function courseMailPage() {
     ${input('folder','IMAP 文件夹')}${input('prefix','作业主题前缀')}
     <label>SMTP 加密方式<select name="smtpMode"><option value="tls" ${smtpSelect('tls')}>TLS</option><option value="starttls" ${smtpSelect('starttls')}>STARTTLS</option></select></label>
     <label class="row"><input name="enabled" type="checkbox" ${cfg.enabled ? 'checked' : ''}>定时收取</label>
+    <label class="row"><input name="autoGrade" type="checkbox" ${cfg.autoGrade ? 'checked' : ''}>自动登记提交并生成批改结果</label>
+    <label class="row"><input name="autoRegisterGrade" type="checkbox" ${cfg.autoRegisterGrade ? 'checked' : ''}>批改完成后自动登分</label>
     <div class="row"><button class="button">保存</button>${screen.settings ? '<button type="button" class="button secondary" data-action="course-mail-check">测试连接</button><button type="button" class="button secondary" data-action="course-mail-sync">收取新邮件</button>' : ''}</div>
     </form>
     <p class="muted section-gap">按主题前缀筛选邮件。首次保存后收到的匹配邮件才会进入列表。</p>
@@ -84,7 +89,8 @@ async function submitCourseMail(form, data) {
   button.disabled = true;
   try {
     if (form.id === 'course-mail-settings') {
-      const request = api('PUT', path, { ...data, enabled: data.enabled === 'on', revision: screen.settings?.revision ?? 0,
+      const request = api('PUT', path, { ...data, enabled: data.enabled === 'on', autoGrade: data.autoGrade === 'on', revision: screen.settings?.revision ?? 0,
+        autoRegisterGrade: data.autoRegisterGrade === 'on',
         imapPort: Number(data.imapPort), smtpPort: Number(data.smtpPort) });
       form.elements.password.value = '';
       delete data.password;
@@ -118,6 +124,16 @@ async function courseMailAction(action, attrs) {
   }
   if (state.dirty) { toast('请先保存当前表单'); return; }
   if (action === 'course-mail-open') screen.open = await api('GET', base);
+  if (action === 'course-mail-reprocess') {
+    const result = await api('POST', base + '/reprocess');
+    toast(result.queued ? '已排队重新匹配，稍后刷新邮件' : '当前版本已匹配或正在处理');
+  }
+  if (action === 'course-mail-register-grade') {
+    const entry = screen.open;
+    if (entry?.id !== attrs.id || !entry.gradeFingerprint || !window.confirm('将当前批改草稿的分数登记到该学生的这次提交？')) return;
+    screen.open = await api('POST', base + '/register-grade', { fingerprint: entry.gradeFingerprint });
+    toast('课程成绩已登记');
+  }
   if (action === 'course-mail-grade') {
     screen.open = await api('POST', base + '/grade');
     toast('批改任务已提交');

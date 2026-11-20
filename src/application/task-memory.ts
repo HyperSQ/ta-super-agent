@@ -81,7 +81,7 @@ export function requireMaterialTask(store: Store, courseId: string, taskId: stri
 }
 export function materialTaskCard(store: Store, task: Task) {
   const origin = task.grant.originEventId && store.event(task.grant.originEventId);
-  return { taskId: task.id, revision: task.revision, status: task.status, updatedAt: task.updatedAt, goal: preview(task.goal, 500) ?? '',
+  return { taskId: task.id, revision: task.revision, status: task.status, createdAt: task.createdAt, updatedAt: task.updatedAt, goal: preview(task.goal, 500) ?? '',
     channel: origin ? origin.channel.kind : undefined, title: task.kind === 'scheduled' ? task.grant.channel?.target : undefined,
     resultPreview: preview(task.result, 1200), artifacts: artifactRefs(task.artifacts) };
 }
@@ -98,6 +98,44 @@ export function findMaterialTasks(store: Store, courseId: string, query: string)
   const normalized = (s: string) => s.normalize('NFKC').toLowerCase().replace(/\s/g, '');
   const term = normalized(query);
   return store.tasks().filter(task => task.courseId === courseId && interactive(task) && !['cancelled', 'superseded'].includes(task.status))
-    .filter(task => !term || [task.id, task.goal, task.grant.channel?.target].some(s => s && normalized(s).includes(term)))
+    .filter(task => !term || [task.id, task.goal, task.grant.channel?.target, task.result,
+      ...task.artifacts?.map(file => file.name) ?? []].some(s => s && normalized(s).includes(term)))
     .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12).map(task => materialTaskCard(store, task));
+}
+
+export type MaterialSearch = { terms: string[]; before?: number; after?: number; offset: number };
+export function recentMaterialRuns(store: Store, courseId: string) {
+  const rows = store.db.prepare("SELECT data FROM tasks WHERE course_id=? AND json_extract(data,'$.kind') IN ('lesson','scheduled') " +
+    "AND json_array_length(data,'$.artifacts')>0 AND status NOT IN ('cancelled','superseded') " +
+    "ORDER BY json_extract(data,'$.updatedAt') DESC,id LIMIT 4").all(courseId);
+  return rows.map(row => JSON.parse(String(row.data)) as Task).filter(interactive).map(task => ({
+    taskId: task.id, status: task.status, updatedAt: task.updatedAt, goal: preview(task.goal, 160),
+    files: task.artifacts?.slice(-4).map(file => preview(file.name, 160)),
+  }));
+}
+
+export function searchMaterialTasks(store: Store, courseId: string, filter: MaterialSearch) {
+  const normalize = (text: string) => text.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
+  const terms = filter.terms.map(normalize).filter(Boolean);
+  const rows = store.db.prepare("SELECT data FROM tasks WHERE course_id=? AND json_extract(data,'$.kind') IN ('lesson','scheduled') " +
+    "AND status NOT IN ('cancelled','superseded') ORDER BY json_extract(data,'$.updatedAt') DESC,id").all(courseId);
+  const candidates = rows.map(row => JSON.parse(String(row.data)) as Task)
+    .filter(task => interactive(task) && (filter.before === undefined || task.updatedAt < filter.before) &&
+      (filter.after === undefined || task.updatedAt >= filter.after));
+  const ranked = candidates.map(task => {
+    const current = normalize([task.id, task.goal, task.grant.channel?.target, ...task.artifacts?.map(file => file.name) ?? [], task.result].join('\n'));
+    const prior = task.revision > 1 && terms.length && !terms.every(term => current.includes(term)) ? priorTaskResult(store, task.id) : undefined;
+    const history = prior ? normalize([prior.text, ...prior.files?.map(file => file.name) ?? []].join('\n')) : '';
+    const matches = terms.filter(term => current.includes(term) || history.includes(term)).length;
+    return { task, matches };
+  }).filter(hit => !terms.length || hit.matches > 0).sort((a, b) => b.matches - a.matches);
+  const pageSize = 8;
+  return {
+    tasks: ranked.slice(filter.offset, filter.offset + pageSize).map(({ task }) => {
+      const card = materialTaskCard(store, task);
+      const prior = !card.artifacts?.length && task.revision > 1 ? priorTaskResult(store, task.id) : undefined;
+      return { ...card, resultPreview: preview(card.resultPreview, 300), artifacts: card.artifacts ?? artifactRefs(prior?.files) };
+    }),
+    nextOffset: ranked.length > filter.offset + pageSize ? filter.offset + pageSize : undefined,
+  };
 }

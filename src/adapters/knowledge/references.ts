@@ -3,16 +3,17 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 type Entry = {
+  sourceKind?: 'markdown';
   id: string; type: string; section?: string; number: string; page: number; endPage: number;
   printedPage?: string; text: string; ambiguous?: boolean; endIsSoft?: boolean;
   sourceSpans: { page: number; start: number; end: number }[];
 };
 export type ExactReference = {
   label: string; bookId: string; page: number; endPage: number; printedPage?: string;
-  text: string; needsVisualVerification: boolean;
+  text: string; needsVisualVerification: boolean; sourceKind?: 'markdown';
 };
 export type ReferenceResult = { requested: string[]; found: ExactReference[]; unresolved: string[] };
-export type TextbookSection = { bookId: string; id: string; title: string; page: number; endPage: number;
+export type TextbookSection = { sourceKind?: 'markdown'; bookId: string; id: string; title: string; page: number; endPage: number;
   topics: { title: string; page: number }[]; excerpts: { page: number; text: string }[] };
 
 const digest = (raw: Buffer) => createHash('sha256').update(raw).digest('hex');
@@ -70,7 +71,7 @@ export class TextbookReferences {
           const text = ('\n' + row.text).slice(Math.max(0, headingStart)).split(new RegExp('\\n\\s*习题\\s*' + id.replace('.', '\\.') + '\\s*\\n', 'u'))[0].trim();
           return text ? [{ page, text: text.slice(0, 2100) }] : [];
         });
-        return [{ bookId, id, title: entry.title, page: start.page, endPage, topics, excerpts }];
+        return [{ ...(manifest.sourceKind === 'markdown' ? { sourceKind: 'markdown' as const } : {}), bookId, id, title: entry.title, page: start.page, endPage, topics, excerpts }];
       } catch { return []; }
     });
   }
@@ -95,8 +96,9 @@ export class TextbookReferences {
         });
         return spans.every(Boolean) && compact(spans.join('')) === compact(e.text);
       });
-      this.cache.set(bookId, entries);
-      return entries;
+      const sourced = manifest.sourceKind === 'markdown' ? entries.map(entry => ({ ...entry, sourceKind: 'markdown' as const })) : entries;
+      this.cache.set(bookId, sourced);
+      return sourced;
     } catch { return []; }
   }
 
@@ -128,7 +130,7 @@ export class TextbookReferences {
       if (hits.length !== 1 || hits[0].entry.ambiguous) { result.unresolved.push(q.label); continue; }
       const { bookId, entry } = hits[0];
       result.found.push({ label: q.label, bookId, page: entry.page, endPage: entry.endPage,
-        printedPage: entry.printedPage, text: entry.text.slice(0, 4000), needsVisualVerification: true });
+        printedPage: entry.printedPage, text: entry.text.slice(0, 4000), needsVisualVerification: entry.sourceKind !== 'markdown', ...(entry.sourceKind ? { sourceKind: entry.sourceKind } : {}) });
     }
     return result;
   }

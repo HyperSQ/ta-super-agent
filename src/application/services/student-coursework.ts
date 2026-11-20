@@ -9,7 +9,7 @@ export type StudentAssignment = {
   id: string; title: string; deadline: string; effectiveDeadline: string;
   submitted: boolean; attempts: number;
   lastSubmittedAt?: string; late?: boolean;
-  score?: number; scoreRegisteredAt?: string;
+  score?: number; scoreMaximum?: number; scoreRegisteredAt?: string;
   extension?: { deadline: string; reason?: string };
   pendingExtension?: { deadline: string; requestedAt: number };
 };
@@ -20,7 +20,8 @@ export type StudentCoursework = {
   hint?: string;
 };
 
-type RequestData = { receivedAt?: number; attempt?: number; late?: boolean; deadline?: string; reason?: string };
+type RequestData = { receivedAt?: number; attempt?: number; late?: boolean; deadline?: string; reason?: string;
+  graded?: { assignmentRevision: number; total: number; maximum: number; at: number } };
 
 const parse = <T>(value: unknown): T | undefined => {
   try { return JSON.parse(String(value)) as T; } catch { return undefined; }
@@ -45,7 +46,7 @@ export function studentCoursework(engine: TaskEngine, courseId: string, actorId:
   const placeholders = ids.map(() => '?').join(',');
   const submissions = db.prepare(`SELECT assignment_id AS assignmentId, data FROM coursework_requests
     WHERE course_id=? AND student_name=? AND kind='submission' AND state='accepted' AND assignment_id IN (${placeholders})
-    ORDER BY json_extract(data,'$.receivedAt')`).all(courseId, name, ...ids) as { assignmentId: string; data: string }[];
+    ORDER BY json_extract(data,'$.receivedAt'), rowid`).all(courseId, name, ...ids) as { assignmentId: string; data: string }[];
   const extensions = new Map<string, { deadline: string; reason?: string }>();
   for (const item of db.prepare(`SELECT assignment_id AS assignmentId, deadline, reason FROM assignment_extensions
     WHERE student_name=? AND assignment_id IN (${placeholders})`).all(name, ...ids) as { assignmentId: string; deadline: string; reason?: string }[])
@@ -77,6 +78,7 @@ export function studentCoursework(engine: TaskEngine, courseId: string, actorId:
       ? extension.deadline : assignment.deadline;
     const attempts = grouped.get(assignment.id) ?? [];
     const last = attempts.at(-1);
+    const mailed = last?.graded?.assignmentRevision === assignment.revision ? last.graded : undefined;
     const score = scores.get(assignment.id);
     const pending = pendingExtensions.get(assignment.id);
     return {
@@ -84,7 +86,7 @@ export function studentCoursework(engine: TaskEngine, courseId: string, actorId:
       submitted: attempts.length > 0, attempts: attempts.length,
       ...(last?.receivedAt ? { lastSubmittedAt: new Date(Number(last.receivedAt)).toISOString() } : {}),
       ...(last ? { late: last.late ?? Number(last.receivedAt ?? 0) > Date.parse(effectiveDeadline) } : {}),
-      ...(score ? { score: score.score, ...(score.registeredAt ? { scoreRegisteredAt: String(score.registeredAt) } : {}) } : {}),
+      ...(mailed ? { score: mailed.total, scoreMaximum: mailed.maximum, scoreRegisteredAt: new Date(mailed.at).toISOString() } : score ? { score: score.score, ...(score.registeredAt ? { scoreRegisteredAt: String(score.registeredAt) } : {}) } : {}),
       ...(extension ? { extension } : {}),
       ...(pending ? { pendingExtension: { deadline: pending.deadline, requestedAt: pending.requestedAt } } : {}),
     };

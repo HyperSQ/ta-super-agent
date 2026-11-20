@@ -19,7 +19,8 @@ test('在 QQ 发起作业，DSH 补充截止时间，工作台核对并确认同
   const f = fixture();
   const assistant = new TeacherConversation(f.engine);
   const router = new Router(f.engine, { async complete(messages) {
-    const { request, taskHandoff } = JSON.parse(String(messages[1].content));
+    const { request, taskHandoff, message } = JSON.parse(String(messages[1].content));
+    if (message) return '{"action":"create","kind":"teaching-affairs","goal":"补充作业截止时间"}';
     if (!request.includes('下周四')) return '{"action":"clarify","question":"什么时候截止？"}';
     assert.match(request, /证明一致收敛/);
     assert(taskHandoff.teacherConversation.some((turn: { reply?: string }) => turn.reply?.includes('什么时候截止')));
@@ -85,11 +86,33 @@ test('按教师和课程隔离对话，多位候选时管理端不会读入 QQ �
   assert.deepEqual(solo.turns.map(turn => turn.text), ['900 私聊消息']);
 });
 
+test('重置边界排除旧教师对话，保留历史事件与其他课程', t => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const service = new TeacherConversation(f.engine);
+  f.engine.createCourse('web:admin', { id: 'other', title: '另一门课', instructions: '' });
+  f.engine.now = () => 100;
+  const old = qq(f, '旧的演练标记');
+  const other = qq(f, '另一门课的记录', '900', 'other');
+  f.store.saveCourse({ ...f.store.course('math')!, teacherHistoryStartAt: 200 });
+  f.engine.updateCourse('web:admin', { id: 'math', title: '数分', instructions: '课程说明' }, 1);
+  f.engine.now = () => 201;
+  const fresh = qq(f, '这周的题目');
+  const latest = qq(f, '新的补充');
+  assert.deepEqual(contextForTeacher(f.engine, latest)?.map(turn => turn.eventId), [fresh.id]);
+  assert.deepEqual(service.history('other').turns.map(turn => turn.eventId), [other.id]);
+  assert.equal(f.store.originalEvent(old.id)?.text, '旧的演练标记');
+});
+
 test('工作台发起、DSH 暂停，教师从 QQ 说继续做恢复同一个任务', async t => {
   const f = fixture();
   t.after(() => f.store.close());
   const assistant = new TeacherConversation(f.engine);
-  const router = new Router(f.engine, { async complete() { throw Error('不能猜任务或依赖模型恢复'); } });
+  const router = new Router(f.engine, { async complete(messages) {
+    const input = JSON.parse(messages.at(-1)!.content);
+    const [paused] = input.plan.tasks.filter((task: { status: string }) => task.status === 'paused');
+    return JSON.stringify({ action: 'resume', taskId: paused.id, revision: paused.revision });
+  } });
   const begin = assistant.send('math', 'workbench', '/lesson 准备一致收敛讲义', 'workbench-lesson-1');
   await router.route(f.store.event(begin.eventId)!, signal);
   const original = f.store.tasks().find(task => task.kind === 'lesson')!;

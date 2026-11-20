@@ -1,6 +1,6 @@
 {
   "name": "@local/ta-super-agent-dsh",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "DSH 助教会话与独立助教服务器的 SSH 桥接",
   "private": true,
   "type": "module",

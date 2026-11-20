@@ -27,6 +27,7 @@ SSH 密码在 DSH 设置表单中按密钥字段隐藏，保存后由 DSH 的本
 - `ta_ask_teacher` 经确认后私信课程定时任务中配置的唯一教师。教师需在 QQ 引用该消息回复，再用 `ta_request_status` 查询答复。
 - `ta_task_memory` 查询本课程服务器上的讲义或定时材料任务，返回当前版本、产物摘要和修改记录。通过 `ta_revise_task` 确认后修改同一任务，保持原任务 ID。需要服务端任务连续性接口。
 - `ta_course_conversation` 查询或继续课程教师在 QQ、助教工作台和 DSH 之间的对话。服务端确定教师身份关联。仅转交当前请求，普通 DSH 会话不加载该工具。
+- 「每周做一份讲义」等课程周期任务通过 `ta_course_conversation` 交给服务器，查看服务端回执后才确认登记。桌面关闭后，已登记的课程计划仍会按时运行。单次制作继续使用 DSH 的本地工具。
 - 文件制作可以用 DSH 的原生文件和命令工具。文件准备好后统一通过 `ta_send_group_file` 上传到课程绑定群，支持 ZIP、PDF、DOCX、Markdown 和 TXT，单文件最大 10 MiB。确认卡展示文件名、大小和目标群，上传结果可用 `ta_request_status` 查询。
 
 ## 维护名单

@@ -37,11 +37,16 @@ export function receiveQQ(engine: TaskEngine, raw: QQMessage) {
   if (!text && !addressed && !linked && attachments.length === 1 && attachments[0].kind === 'file')
     return receiveGroupUpload(engine, { group_id: raw.group_id, user_id: raw.user_id, self_id: raw.self_id,
       file: { id: attachments[0].fileId, name: attachments[0].name, size: attachments[0].size } });
+  const passive = !addressed && !linked;
+  const passiveQuestion = passive && !engine.policy.isTeacher(`qq:${raw.user_id}`) &&
+    text.length >= 8 && !text.startsWith('/') &&
+    /[？?]|为什么|如何|怎么|不明白|没懂|卡在|还是分不清/u.test(text);
   return engine.receive({ sourceKey: `qq:${channelKey(channel)}:${raw.message_id}`, courseId: course.id,
+    ...(passiveQuestion ? { passiveQuestion: true as const } : {}),
     threadId: linked ?? (quotedMedia ? target?.threadId : undefined) ?? randomUUID(), actorId: `qq:${raw.user_id}`, text: text || '[QQ 附件]', quoted: !!linked || quotedMedia,
     ...(attachments.length ? { attachments } : {}),
     quotedExternalId: linked || quotedMedia ? String(quote) : undefined,
-    channel, externalId: String(raw.message_id), receivedAt: Date.now() }, !addressed && !linked);
+    channel, externalId: String(raw.message_id), receivedAt: engine.now() }, passive);
 }
 
 export function receiveGroupUpload(engine: TaskEngine, data: Record<string, unknown>) {

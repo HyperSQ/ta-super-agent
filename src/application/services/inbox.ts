@@ -97,15 +97,19 @@ export function courseInbox(engine: TaskEngine, courseId: string, options: { now
   }
 
   // 5. 批改批次：每个截止节点一批，教师一次审核后统一回信。
-  const grading = db.prepare("SELECT id,node_at AS nodeAt,data FROM grading_batches WHERE course_id=? AND status='pending'")
+  const grading = db.prepare(`SELECT id,node_at AS nodeAt,status,data FROM grading_batches WHERE course_id=?
+    AND (status IN ('pending','interrupted') OR (status='approved' AND json_array_length(data,'$.failed')>0))`)
     .all(courseId) as Record<string, unknown>[];
   for (const row of grading) {
-    const batch = json<{ items?: { studentName?: string }[] }>(row.data);
+    const batch = json<{ items?: { studentName?: string }[]; failed?: string[] }>(row.data);
+    const pending = row.status === 'pending';
     const names = (batch?.items ?? []).map(item => item.studentName).filter((name): name is string => !!name);
     items.push({
-      kind: 'grading', id: String(row.id), status: 'pending', createdAt: Number(row.nodeAt),
-      title: `批改待审核：${names.length} 份`, entry: 'course-mail',
-      detail: names.slice(0, 8).join('、') + (names.length > 8 ? ` 等 ${names.length} 人` : '') || undefined,
+      kind: 'grading', id: String(row.id), status: String(row.status), createdAt: Number(row.nodeAt),
+      title: pending ? `批改待审核：${names.length} 份` : row.status === 'interrupted' ? '批改回信中断，需核对' : `批改回信有 ${batch?.failed?.length ?? 0} 份需核对`,
+      entry: 'course-mail',
+      detail: pending ? names.slice(0, 8).join('、') + (names.length > 8 ? ` 等 ${names.length} 人` : '') || undefined
+        : '请在课程邮箱核对各邮件的发送回执。',
     });
   }
 

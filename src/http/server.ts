@@ -17,9 +17,9 @@ import { listAlerts } from '../application/watchdog.ts';
 import { courseInbox } from '../application/services/inbox.ts';
 import { buildProposals } from '../application/services/proposals.ts';
 import { DSH, maxHandoutBytes } from '../application/services/dsh.ts';
+import { importMarkdownTextbook } from '../adapters/knowledge/markdown.ts';
 import { classContext } from '../application/services/class-context.ts';
-import { dshOnlyTools, scheduledTools, weeklyTasks } from '../application/weekly-lesson.ts';
-import type { ScheduledTool } from '../domain/model.ts';
+import { dshOnlyTools, queueScheduleRun, scheduleFields, scheduledTools, weeklyTasks } from '../application/weekly-lesson.ts';
 import { Roster, parseRosterFile, rosterFileLimit } from '../application/services/roster.ts';
 import { QATools } from '../agents/qa-tools.ts';
 import { dshArtifacts, dshFile } from '../agents/workers/dsh-worker.ts';
@@ -101,12 +101,11 @@ function adminEvent(engine: TaskEngine, courseId: string, text: string): Event {
   return engine.receive({ sourceKey: `web:${randomUUID()}`, threadId: randomUUID(), courseId, actorId: 'web:admin', text,
     channel: { kind: 'management', target: 'admin' }, externalId: randomUUID(), receivedAt: Date.now() }).event;
 }
-export function createApi(engine: TaskEngine, config: Pick<Config, 'adminToken' | 'webhookToken' | 'headless'>, qqAccess = new QQAccess(engine), qa = new QATools(engine), attachments?: QQAttachmentReader, mail?: CourseMail, batches?: GradingBatches, groups?: GroupFiles) {
+export function createApi(engine: TaskEngine, config: Pick<Config, 'adminToken' | 'webhookToken' | 'headless'>, qqAccess = new QQAccess(engine), qa = new QATools(engine), attachments?: QQAttachmentReader, mail?: CourseMail, batches?: GradingBatches, groups?: GroupFiles, coursework = new CourseworkIntake(engine), libraryRoot?: string) {
   const academics = new Academics(engine);
   const memory = new MemoryService(engine);
   const dsh = new DSH(engine, config.adminToken, attachments);
   const roster = new Roster(engine);
-  const coursework = new CourseworkIntake(engine);
   const conversation = new TeacherConversation(engine);
   return createServer(async (req, res) => {
     try {
@@ -144,7 +143,27 @@ export function createApi(engine: TaskEngine, config: Pick<Config, 'adminToken' 
           return;
         }
       }
-      const mailRoute = /^\/v1\/courses\/([^/]+)\/mail(?:\/(check|sync|messages\/([a-f0-9-]{36})(?:\/(review|reply|grade|files\/([1-3])))?))?$/.exec(url.pathname);
+      const materialsRoute = /^\/v1\/courses\/([^/]+)\/(passive-questions|textbook-import)$/.exec(url.pathname);
+      if (materialsRoute) {
+        const courseId = decodeURIComponent(materialsRoute[1]);
+        if (req.method === 'GET' && materialsRoute[2] === 'passive-questions') {
+          send(res, 200, classContext(engine, courseId, { days: 7 }).group.passiveQuestions); return;
+        }
+        if (req.method === 'POST' && materialsRoute[2] === 'textbook-import') {
+          if (!libraryRoot) throw new DomainError('unavailable', '服务器尚未配置本地教材库');
+          const data = await body(req, 800_000);
+          const course = engine.store.course(courseId);
+          if (!course) throw new DomainError('not_found', '课程不存在');
+          if ((course.revision ?? 1) !== revision(data)) throw new DomainError('stale', '课程已修改，请刷新后再导入');
+          if ((course.textbookIds?.length ?? 0) >= 100) throw new DomainError('invalid', '课程教材数量已达上限');
+          if (typeof data.markdown !== 'string') throw new DomainError('invalid', '请提供 UTF-8 Markdown 教材正文');
+          const book = importMarkdownTextbook(libraryRoot, courseId, data.markdown);
+          if (!course.textbookIds?.includes(book.id))
+            engine.updateCourse('web:admin', { ...course, textbookIds: [...(course.textbookIds ?? []), book.id] }, course.revision ?? 1);
+          send(res, 201, book); return;
+        }
+      }
+      const mailRoute = /^\/v1\/courses\/([^/]+)\/mail(?:\/(check|sync|messages\/([a-f0-9-]{36})(?:\/(review|reprocess|reply|grade|register-grade|files\/([1-3])))?))?$/.exec(url.pathname);
       if (mailRoute && mail) {
         const courseId = decodeURIComponent(mailRoute[1]), [, , route, message, action, file] = mailRoute;
         if (req.method === 'GET' && !route) { send(res, 200, mail.get(courseId)); return; }
@@ -153,6 +172,7 @@ export function createApi(engine: TaskEngine, config: Pick<Config, 'adminToken' 
         if (req.method === 'POST' && route === 'sync') { send(res, 200, await mail.sync(courseId)); return; }
         if (req.method === 'GET' && message && !action) { send(res, 200, mail.read(courseId, message)); return; }
         if (req.method === 'GET' && file) { send(res, 200, mail.file(courseId, message, Number(file))); return; }
+        if (req.method === 'POST' && action === 'reprocess') { send(res, 202, mail.reprocessIntake(courseId, message)); return; }
         if (req.method === 'POST' && action === 'review') {
           const data = await body(req, 8192);
           if (typeof data.ignore !== 'boolean') throw new DomainError('invalid', '需选择登记或忽略');
@@ -162,6 +182,9 @@ export function createApi(engine: TaskEngine, config: Pick<Config, 'adminToken' 
           send(res, 200, await mail.reply(courseId, message, str(await body(req), 'text'))); return;
         }
         if (req.method === 'POST' && action === 'grade') { send(res, 202, mail.requestGrade(courseId, message)); return; }
+        if (req.method === 'POST' && action === 'register-grade') {
+          send(res, 200, mail.registerGrade(courseId, message, str(await body(req), 'fingerprint'))); return;
+        }
       }
       const batchRoute = /^\/v1\/courses\/([^/]+)\/grading-batches(?:\/([a-f0-9-]{36})\/(approve|reject))?$/.exec(url.pathname);
       if (batchRoute && batches) {
@@ -440,10 +463,7 @@ export function createApi(engine: TaskEngine, config: Pick<Config, 'adminToken' 
         const plan = course && weeklyTasks(course).find(item => item.id === decodeURIComponent(startSchedule[2]));
         if (!course || !plan) throw new DomainError('not_found', '找不到课内定时任务');
         if (plan.worker === 'dsh' && !config.headless) throw new DomainError('unavailable', '此服务器尚未启用隔离 DSH Worker');
-        const key = 'manual-schedule:' + randomUUID();
-        const { event } = engine.receive({ sourceKey: key, externalId: key, courseId: course.id, threadId: key, actorId: 'web:admin',
-          channel: { kind: 'management', target: plan.title }, text: plan.prompt, receivedAt: engine.now(), scheduled: 'custom',
-          scheduledTools: plan.tools, scheduledWorker: plan.worker });
+        const { event } = queueScheduleRun(engine, course, plan);
         send(res, 202, { eventId: event.id }); return;
       }
       if (schedulesRoute && (req.method === 'GET' || req.method === 'PUT')) {
@@ -458,22 +478,7 @@ export function createApi(engine: TaskEngine, config: Pick<Config, 'adminToken' 
         const tasks = data.tasks.map((value: unknown) => {
           if (!value || typeof value !== 'object' || Array.isArray(value)) throw new DomainError('invalid', '定时任务格式无效');
           const row = value as Record<string, unknown>;
-          const taskId = str(row, 'id'), title = str(row, 'title'), prompt = str(row, 'prompt');
-          const { weekday, time, tools, enabled } = row;
-          const teacherQQ = text(row, 'teacherQQ');
-          if (!/^[\w-]{1,80}$/.test(taskId) || title.length > 100 || prompt.length > 8000 ||
-              typeof weekday !== 'number' || !Number.isInteger(weekday) || weekday < 0 || weekday > 6 ||
-              typeof time !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time) || typeof enabled !== 'boolean' ||
-              (teacherQQ && (!/^\d+$/.test(teacherQQ) || !engine.policy.isTeacher('qq:' + teacherQQ))) ||
-              !Array.isArray(tools) || tools.some(tool => !scheduledTools.includes(tool))) throw new DomainError('invalid', '任务名称、提示词、时间、教师或工具配置无效');
-          const prior = saved.find(task => task.id === taskId);
-          const worker = row.worker ?? prior?.worker ?? 'native';
-          if (worker !== 'native' && worker !== 'dsh' || worker === 'native' && tools.some(tool => dshOnlyTools.has(tool)))
-            throw new DomainError('invalid', '此工具需要 DSH 执行方式');
-          if (worker === 'dsh' && !config.headless) throw new DomainError('unavailable', '此服务器尚未启用隔离 DSH Worker');
-          return { id: taskId, title, prompt, weekday, time, enabled, tools: [...new Set<ScheduledTool>(tools)], teacherQQ: teacherQQ || undefined,
-            worker: worker as 'native' | 'dsh',
-            enabledAt: prior?.enabled && prior.weekday === weekday && prior.time === time ? prior.enabledAt : engine.now() };
+          return scheduleFields(engine, row, !!config.headless, saved.find(task => task.id === row.id));
         });
         if (new Set(tasks.map(task => task.id)).size !== tasks.length) throw new DomainError('invalid', '定时任务 ID 重复');
         const next = engine.updateCourse('web:admin', { ...course, weeklyTasks: tasks, weeklyLesson: undefined }, revision(data));
